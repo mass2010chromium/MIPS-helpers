@@ -136,29 +136,29 @@ def buildStackFrames(file):
             
             head_idx = function_head - func_start
             if len(aliases) > 0:
-                code_lines.insert(head_idx, "\t## End aliases\t-- stackFrameHelper.py\n\n")
+                code_lines.insert(head_idx, "\t## End aliases\t-- emips.py\n\n")
                 code_lines.insert(head_idx, "\t##\n")
                 
                 for x in aliases:
                     code_lines.insert(head_idx, "\t##\t{} = {}\n".format(x[1], x[0]))
                 
                 code_lines.insert(head_idx, "\t##\n")
-                code_lines.insert(head_idx, "\t## Aliases\t-- stackFrameHelper.py\n")
+                code_lines.insert(head_idx, "\t## Aliases\t-- emips.py\n")
             
             if useStack:
-                code_lines.insert(head_idx, "\t## End stack setup\t-- stackFrameHelper.py\n\n")
+                code_lines.insert(head_idx, "\t## End stack setup\t-- emips.py\n\n")
                 code_lines.insert(head_idx, "\tsw\t$ra, 0($sp)\n")
                 code_lines.insert(head_idx, "\taddi\t$sp, $sp, -{}\n".format(str(stackSize)))
                 
                 for x in stack_varnames:
                     code_lines.insert(head_idx, "\t## Index {}\tVariable {}\n".format(str(stack[x]), x))
                     
-                code_lines.insert(head_idx, "\t## Stack setup\t-- stackFrameHelper.py\n")
+                code_lines.insert(head_idx, "\t## Stack setup\t-- emips.py\n")
             
-                code_lines.append("\n\t## Stack teardown\t-- stackFrameHelper.py\n")
+                code_lines.append("\n\t## Stack teardown\t-- emips.py\n")
                 code_lines.append("\tlw\t$ra, 0($sp)\n")
                 code_lines.append("\taddi\t$sp, $sp, {}\n".format(str(stackSize)))
-                code_lines.append("\t## End stack teardown\t-- stackFrameHelper.py\n\n")
+                code_lines.append("\t## End stack teardown\t-- emips.py\n\n")
             
             
             code_lines.append("\tjr\t$ra\n")
