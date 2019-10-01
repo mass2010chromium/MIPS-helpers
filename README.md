@@ -3,6 +3,7 @@ Some quality of life stuff for MIPS. Kinda like language extensions in a big ugl
 
 ## Usage: 
 emips.py inputfilename
+
 emips.py
 
 If the input file ends in .fs, it automatically sets the output file, with a .s extension.
