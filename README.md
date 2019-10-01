@@ -30,3 +30,11 @@ Also includes Notepad++ language files for the small language extensions
   
 ## sstk (Store Stack)
   Store an aliased stack variable. Compiles to sw with an offset.
+
+# Demos
+
+Aliasing demo. Left: Before, Right: After
+![demo 1](https://github.com/mass2010chromium/MIPS-helpers/blob/master/images/demo.png)
+
+StackAlloc demo. Left: Before, Right: After
+![demo 2](https://github.com/mass2010chromium/MIPS-helpers/blob/master/images/demo2.png)
