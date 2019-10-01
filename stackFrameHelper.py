@@ -157,10 +157,10 @@ def buildStackFrames(file):
                     
                 code_lines.insert(head_idx, "\t## Stack setup\t-- stackFrameHelper.py\n")
             
-                code_lines.insert(head_idx, "\t## Stack teardown\t-- stackFrameHelper.py\n")
+                code_lines.append("\n\t## Stack teardown\t-- stackFrameHelper.py\n")
                 code_lines.append("\tlw\t$ra, 0($sp)\n")
                 code_lines.append("\taddi\t$sp, $sp, {}\n".format(str(stackSize)))
-                code_lines.insert(head_idx, "\t## End stack teardown\t-- stackFrameHelper.py\n\n")
+                code_lines.append("\t## End stack teardown\t-- stackFrameHelper.py\n\n")
             
             
             code_lines.append("\tjr\t$ra\n")
