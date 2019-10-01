@@ -30,6 +30,7 @@ def buildStackFrames(file):
             useStack = False
             stack = {"ra": 0} # Key: localName, value: offset
             stack_varnames = ["ra"]
+            stack_inserts = []
             aliases = []
             stackSize = 4
             code_lines = []
@@ -38,7 +39,24 @@ def buildStackFrames(file):
             function_head = -1
             while (not line.strip().startswith(("!FUNCTION", "!function"))):
                 interpret = line.strip()
-                if interpret.startswith(".stackalloc"):
+                if interpret.startswith(".stacksave"):
+                    if (function_head == -1):
+                        print(i, ": Syntax error: .stacksave symbol found before function_head")
+                        return
+                    useStack = True
+                    stack_vars = re.findall('[^\s]+', line)[1:]
+                    for x in stack_vars:
+                        if not x.startswith("$"):
+                            print(i, ": Syntax error: .stacksave requires a list of registers to save but found ", x)
+                            return
+                        stack_varnames.append(x)
+                        stack[x] = stackSize
+                        stackSize += 4
+                        stack_inserts.append(x)
+                elif interpret.startswith(".stackalloc"):
+                    if (function_head == -1):
+                        print(i, ": Syntax error: .stackalloc symbol found before function_head")
+                        return
                     useStack = True
                     stack_vars = re.findall('[^\s]+', line)[1:]
                     # stack_vars = re.findall('\s+[(]\d+[)][a-zA-Z][^\s#]*', line)
@@ -49,7 +67,7 @@ def buildStackFrames(file):
                             name = split_var[2]
                             try:
                                 if int(size) % 4:
-                                    print(i, ": Syntax error: Stack allocations must be in multiples of 4, support may be added later")
+                                    print(i, ": Syntax error: Stack allocations must be in multiples of 4, support for byte allocations may be added later")
                                     return
                             except:
                                 print(i, ": Syntax error: Stack allocation size must be an integer, found ", size)
@@ -61,6 +79,9 @@ def buildStackFrames(file):
                             print(i, ": Syntax error: Bad stack alloc declaration ", x, ", expected [ (bytesize)vname ]")
                             return
                 elif interpret.startswith(".alias"):
+                    if (function_head == -1):
+                        print(i, ": Syntax error: .alias symbol found before function_head")
+                        return
                     alias_vars = re.findall('[^\s]+', line)[1:]
                     for x in alias_vars:
                         split_var = re.match("([(]\$[^)]+[)])([a-zA-Z][^\s#]*)", x.strip())
@@ -147,17 +168,28 @@ def buildStackFrames(file):
             
             if useStack:
                 code_lines.insert(head_idx, "\t## End stack setup\t-- emips.py\n\n")
+                code_lines.insert(head_idx, "\t##\n")
+                
+                code_lines.append("\n\t## Stack teardown\t-- emips.py\n")
+                code_lines.append("\t##\n")
+                
+                for x in stack_inserts:
+                    code_lines.insert(head_idx, "\tsw\t{}, {}($sp)\n".format(x, str(stack[x])))
+                    code_lines.append("\tlw\t{}, {}($sp)\n".format(x, str(stack[x])))
+                    
                 code_lines.insert(head_idx, "\tsw\t$ra, 0($sp)\n")
                 code_lines.insert(head_idx, "\taddi\t$sp, $sp, -{}\n".format(str(stackSize)))
                 
                 for x in stack_varnames:
                     code_lines.insert(head_idx, "\t## Index {}\tVariable {}\n".format(str(stack[x]), x))
                     
+                code_lines.insert(head_idx, "\t##\n")
                 code_lines.insert(head_idx, "\t## Stack setup\t-- emips.py\n")
             
-                code_lines.append("\n\t## Stack teardown\t-- emips.py\n")
+                
                 code_lines.append("\tlw\t$ra, 0($sp)\n")
                 code_lines.append("\taddi\t$sp, $sp, {}\n".format(str(stackSize)))
+                code_lines.append("\t##\n")
                 code_lines.append("\t## End stack teardown\t-- emips.py\n\n")
             
             

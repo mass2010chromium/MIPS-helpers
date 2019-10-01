@@ -25,7 +25,7 @@
             <Keywords name="Folders in comment, middle"></Keywords>
             <Keywords name="Folders in comment, close"></Keywords>
             <Keywords name="Keywords1">add&#x000D;&#x000A;addu&#x000D;&#x000A;sub&#x000D;&#x000A;subu&#x000D;&#x000A;addi&#x000D;&#x000A;addiu&#x000D;&#x000A;mult&#x000D;&#x000A;multu&#x000D;&#x000A;div&#x000D;&#x000A;divu&#x000D;&#x000A;lw&#x000D;&#x000A;lh&#x000D;&#x000A;lhu&#x000D;&#x000A;lb&#x000D;&#x000A;lbu&#x000D;&#x000A;sw&#x000D;&#x000A;sh&#x000D;&#x000A;sb&#x000D;&#x000A;lui&#x000D;&#x000A;mfhi&#x000D;&#x000A;mflo&#x000D;&#x000A;mfcZ&#x000D;&#x000A;mtcZ&#x000D;&#x000A;and&#x000D;&#x000A;andi&#x000D;&#x000A;or&#x000D;&#x000A;ori&#x000D;&#x000A;xor&#x000D;&#x000A;nor&#x000D;&#x000A;slt&#x000D;&#x000A;slti&#x000D;&#x000A;sll&#x000D;&#x000A;srl&#x000D;&#x000A;sra&#x000D;&#x000A;sllv&#x000D;&#x000A;srlv&#x000D;&#x000A;srav&#x000D;&#x000A;beq&#x000D;&#x000A;bne&#x000D;&#x000A;j&#x000D;&#x000A;jr&#x000D;&#x000A;jal&#x000D;&#x000A;add.s&#x000D;&#x000A;sub.s&#x000D;&#x000A;mul.s&#x000D;&#x000A;div.s&#x000D;&#x000A;add.d&#x000D;&#x000A;sub.d&#x000D;&#x000A;mul.d&#x000D;&#x000A;div.d&#x000D;&#x000A;lwcZ&#x000D;&#x000A;swcZ&#x000D;&#x000A;c.lt.s&#x000D;&#x000A;c.lt.d&#x000D;&#x000A;bc1t&#x000D;&#x000A;bc1f&#x000D;&#x000A;move&#x000D;&#x000A;clear&#x000D;&#x000A;not&#x000D;&#x000A;la&#x000D;&#x000A;li&#x000D;&#x000A;b&#x000D;&#x000A;bal&#x000D;&#x000A;bgt&#x000D;&#x000A;blt&#x000D;&#x000A;bge&#x000D;&#x000A;ble&#x000D;&#x000A;bgtu&#x000D;&#x000A;bgtz&#x000D;&#x000A;beqz&#x000D;&#x000A;mul&#x000D;&#x000A;div&#x000D;&#x000A;rem&#x000D;&#x000A;NOP&#x000D;&#x000A;syscall&#x000D;&#x000A;swc1&#x000D;&#x000A;mov.s&#x000D;&#x000A;mfc1&#x000D;&#x000A;bnez&#x000D;&#x000A;bgez&#x000D;&#x000A;lwc1&#x000D;&#x000A;l.s&#x000D;&#x000A;bltz&#x000D;&#x000A;sqrt.s&#x000D;&#x000A;c.le.s&#x000D;&#x000A;cvt.w.s&#x000D;&#x000A;cvt.s.w&#x000D;&#x000A;seq&#x000D;&#x000A;jalr&#x000D;&#x000A;rol&#x000D;&#x000A;&#x000D;&#x000A;</Keywords>
-            <Keywords name="Keywords2">.alias</Keywords>
+            <Keywords name="Keywords2">.alias .stacksave</Keywords>
             <Keywords name="Keywords3">$</Keywords>
             <Keywords name="Keywords4">lstk sstk</Keywords>
             <Keywords name="Keywords5">.</Keywords>
@@ -37,7 +37,7 @@
         <Styles>
             <WordsStyle name="DEFAULT" fgColor="000000" bgColor="FFFFFF" fontName="" fontStyle="0" nesting="0" />
             <WordsStyle name="COMMENTS" fgColor="000000" bgColor="FFFFFF" fontName="" fontStyle="3" nesting="117702655" />
-            <WordsStyle name="LINE COMMENTS" fgColor="000000" bgColor="FFFFFF" fontName="le." fontStyle="2" nesting="117702655" />
+            <WordsStyle name="LINE COMMENTS" fgColor="808080" bgColor="FFFFFF" fontName="le." fontStyle="0" nesting="117702655" />
             <WordsStyle name="NUMBERS" fgColor="000000" bgColor="FFFFFF" fontName="is has no effect if the element is already present." fontStyle="0" nesting="0" />
             <WordsStyle name="KEYWORDS1" fgColor="0000FF" bgColor="FFFFFF" fontName="" fontStyle="1" nesting="0" />
             <WordsStyle name="KEYWORDS2" fgColor="000040" bgColor="FFFFFF" fontName="" fontStyle="3" nesting="0" />
