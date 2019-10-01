@@ -47,7 +47,6 @@ def buildStackFrames(file):
                         if split_var:
                             size = split_var[1][1:-1]
                             name = split_var[2]
-                            stack[name] = size
                             try:
                                 if int(size) % 4:
                                     print(i, ": Syntax error: Stack allocations must be in multiples of 4, support may be added later")
@@ -55,6 +54,7 @@ def buildStackFrames(file):
                             except:
                                 print(i, ": Syntax error: Stack allocation size must be an integer, found ", size)
                                 return
+                            stack[name] = stackSize
                             stackSize += int(size)
                             stack_varnames.append(name)
                         else:
@@ -106,11 +106,10 @@ def buildStackFrames(file):
                         return
                     var = lstk_inst[2]
                     if var in stack:
-                        code_lines.append("\tlw\t{}, {}($sp)\n".format(lstk_inst[1], stack[var]))
+                        line = "\tlw\t{}, {}($sp)\n".format(lstk_inst[1], stack[var])
                     else:
                         print(j, ": Syntax error: lstk (Load Stack): could not find stack variable by name", var)
                         return
-                    continue;
                 
                 sstk = re.match("[^#]:*\s*sstk\s+", line)
                 if sstk:
@@ -123,11 +122,10 @@ def buildStackFrames(file):
                         return
                     var = sstk_inst[2]
                     if var in stack:
-                        code_lines.append("\tsw\t{}, {}($sp)\n".format(sstk_inst[1], stack[var]))
+                        line = "\tsw\t{}, {}($sp)\n".format(sstk_inst[1], stack[var])
                     else:
                         print(j, ": Syntax error: sstk (Store Stack): could not find stack variable by name", var)
                         return
-                    continue;
                     
                 for alias in aliases:
                     line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
@@ -153,7 +151,7 @@ def buildStackFrames(file):
                 code_lines.insert(head_idx, "\taddi\t$sp, $sp, -{}\n".format(str(stackSize)))
                 
                 for x in stack_varnames:
-                    code_lines.insert(head_idx, "\t# Index {}\tVariable {}\n".format(str(stack[x]), x))
+                    code_lines.insert(head_idx, "\t## Index {}\tVariable {}\n".format(str(stack[x]), x))
                     
                 code_lines.insert(head_idx, "\t## Stack setup\t-- stackFrameHelper.py\n")
             
