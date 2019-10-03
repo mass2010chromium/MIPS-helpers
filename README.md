@@ -24,6 +24,10 @@ Also includes Notepad++ language files for the small language extensions
 ## .alias
   Alias a register. See demo images.
   
+## .stacksave 
+  Saves certain registers to the stack, and then resets them when tearing the stack down. (Use for S registers)
+  Example usage: .stacksave $s0 $s1
+
 ## .stackalloc
   Sets up and tears down a stack frame with aliased stack variables of specified sizes.
 
