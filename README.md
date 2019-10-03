@@ -26,6 +26,7 @@ Also includes Notepad++ language files for the small language extensions
   
 ## .stacksave 
   Saves certain registers to the stack, and then resets them when tearing the stack down. (Use for S registers)
+  
   Example usage: .stacksave $s0 $s1
 
 ## .stackalloc
