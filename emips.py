@@ -114,7 +114,7 @@ def buildStackFrames(file):
             for j in range(func_start + 1, i):
                 line = file[j]
                 interpret = line.strip()
-                if interpret.startswith(".stackalloc") or interpret.startswith(".alias"):
+                if interpret.startswith(".stackalloc") or interpret.startswith(".alias") or interpret.startswith(".stacksave"):
                     continue
                 lstk = re.match("[^#]:*\s*lstk\s+", line)
                 if lstk:
