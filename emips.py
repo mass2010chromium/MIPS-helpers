@@ -39,7 +39,7 @@ def buildStackFrames(file):
             function_head = -1
             while (not line.strip().startswith(("!FUNCTION", "!function"))):
                 interpret = line.strip()
-                if interpret.startswith(".stacksave"):
+                if interpret.startswith(".stacksave "):
                     if (function_head == -1):
                         print(i, ": Syntax error: .stacksave symbol found before function_head")
                         return
@@ -53,7 +53,7 @@ def buildStackFrames(file):
                         stack[x] = stackSize
                         stackSize += 4
                         stack_inserts.append(x)
-                elif interpret.startswith(".stackalloc"):
+                elif interpret.startswith(".stackalloc "):
                     if (function_head == -1):
                         print(i, ": Syntax error: .stackalloc symbol found before function_head")
                         return
@@ -78,7 +78,7 @@ def buildStackFrames(file):
                         else:
                             print(i, ": Syntax error: Bad stack alloc declaration ", x, ", expected [ (bytesize)vname ]")
                             return
-                elif interpret.startswith(".alias"):
+                elif interpret.startswith(".alias "):
                     if (function_head == -1):
                         print(i, ": Syntax error: .alias symbol found before function_head")
                         return
@@ -109,13 +109,31 @@ def buildStackFrames(file):
                 return
             
             
-            # Replacing all the things
+            # Replacing all the things, and local aliasing
+            
+            local_alias = []
             
             for j in range(func_start + 1, i):
                 line = file[j]
                 interpret = line.strip()
-                if interpret.startswith(".stackalloc") or interpret.startswith(".alias") or interpret.startswith(".stacksave"):
+                if interpret.startswith(".stackalloc ") or interpret.startswith(".alias ") or interpret.startswith(".stacksave "):
                     continue
+                if interpret.startswith(".aliaslocal "):
+                    alias_vars = re.findall('[^\s]+', line)[1:]
+                    for x in alias_vars:
+                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z][^\s#]*)", x.strip())
+                        if split_var:
+                            reg = split_var[1][1:-1]
+                            name = split_var[2]
+                            local_alias.append((name, reg))
+                        else:
+                            print(j, ": Syntax error: Bad aliaslocal declaration ", x, ", expected [ (register)vname ]")
+                            return
+                            
+                    continue
+                if interpret.startswith(".clear"):
+                    local_alias = []
+                    continue;
                 lstk = re.match("[^#]:*\s*lstk\s+", line)
                 if lstk:
                     if not useStack:
@@ -148,6 +166,8 @@ def buildStackFrames(file):
                         print(j, ": Syntax error: sstk (Store Stack): could not find stack variable by name", var)
                         return
                     
+                for alias in local_alias:
+                    line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
                 for alias in aliases:
                     line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
                 
@@ -166,16 +186,18 @@ def buildStackFrames(file):
                 code_lines.insert(head_idx, "\t##\n")
                 code_lines.insert(head_idx, "\t## Aliases\t-- emips.py\n")
             
+            cleanup_code = []
+            
             if useStack:
                 code_lines.insert(head_idx, "\t## End stack setup\t-- emips.py\n\n")
                 code_lines.insert(head_idx, "\t##\n")
                 
-                code_lines.append("\n\t## Stack teardown\t-- emips.py\n")
-                code_lines.append("\t##\n")
+                cleanup_code.append("\n\t## Stack teardown\t-- emips.py\n")
+                cleanup_code.append("\t##\n")
                 
                 for x in stack_inserts:
                     code_lines.insert(head_idx, "\tsw\t{}, {}($sp)\n".format(x, str(stack[x])))
-                    code_lines.append("\tlw\t{}, {}($sp)\n".format(x, str(stack[x])))
+                    cleanup_code.append("\tlw\t{}, {}($sp)\n".format(x, str(stack[x])))
                     
                 code_lines.insert(head_idx, "\tsw\t$ra, 0($sp)\n")
                 code_lines.insert(head_idx, "\taddi\t$sp, $sp, -{}\n".format(str(stackSize)))
@@ -187,13 +209,18 @@ def buildStackFrames(file):
                 code_lines.insert(head_idx, "\t## Stack setup\t-- emips.py\n")
             
                 
-                code_lines.append("\tlw\t$ra, 0($sp)\n")
-                code_lines.append("\taddi\t$sp, $sp, {}\n".format(str(stackSize)))
-                code_lines.append("\t##\n")
-                code_lines.append("\t## End stack teardown\t-- emips.py\n\n")
+                cleanup_code.append("\tlw\t$ra, 0($sp)\n")
+                cleanup_code.append("\taddi\t$sp, $sp, {}\n".format(str(stackSize)))
+                cleanup_code.append("\t##\n")
+                cleanup_code.append("\t## End stack teardown\t-- emips.py\n\n")
             
+            cleanup_code.append("\tjr\t$ra\n")
             
-            code_lines.append("\tjr\t$ra\n")
+            for k in range(len(code_lines) - 1, -1, -1):
+                
+                if code_lines[k].strip().lower().startswith("@return"):
+                    code_lines[k:k+1] = cleanup_code
+            
             functions[function_name] = code_lines
             original_length = i - func_start + 1
             len_diff = original_length - len(code_lines)
