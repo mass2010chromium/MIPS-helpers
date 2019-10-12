@@ -8,7 +8,7 @@ class Function:
         self._attributes = attributes
 
 '''
-Pass me a list of lines in a file! 
+Pass me a list of lines in a file!
 For now not compatible with inliner.py.
 '''
 def buildStackFrames(file):
@@ -53,7 +53,7 @@ def buildStackFrames(file):
                         stack[x] = stackSize
                         stackSize += 4
                         stack_inserts.append(x)
-                elif interpret.startswith(".stackalloc "):
+                elif interpret.startswith(".stackalloc"):
                     if (function_head == -1):
                         print(i, ": Syntax error: .stackalloc symbol found before function_head")
                         return
@@ -92,7 +92,7 @@ def buildStackFrames(file):
                         else:
                             print(i, ": Syntax error: Bad alias declaration ", x, ", expected [ (register)vname ]")
                             return
-                    
+
                 elif interpret.startswith(function_name + ":"):
                     if function_head != -1:
                         print(i, ": Syntax error: Duplicate function label declaration, first seen at ", str(function_head))
@@ -103,20 +103,20 @@ def buildStackFrames(file):
                     print(i, ": Syntax error: Expected closing !FUNCTION tag for @FUNCTION declaration at ", func_start)
                     return
                 line = file[i]
-                
+
             if function_head == -1:
                 print(i, ": Syntax error: Did not find function start for @FUNCTION declaration at ", func_start)
                 return
-            
-            
+
+
             # Replacing all the things, and local aliasing
-            
+
             local_alias = []
-            
+
             for j in range(func_start + 1, i):
                 line = file[j]
                 interpret = line.strip()
-                if interpret.startswith(".stackalloc ") or interpret.startswith(".alias ") or interpret.startswith(".stacksave "):
+                if interpret.startswith(".stackalloc") or interpret.startswith(".alias ") or interpret.startswith(".stacksave "):
                     continue
                 if interpret.startswith(".aliaslocal "):
                     alias_vars = re.findall('[^\s]+', line)[1:]
@@ -129,7 +129,7 @@ def buildStackFrames(file):
                         else:
                             print(j, ": Syntax error: Bad aliaslocal declaration ", x, ", expected [ (register)vname ]")
                             return
-                            
+
                     continue
                 if interpret.startswith(".clear"):
                     local_alias = []
@@ -149,7 +149,7 @@ def buildStackFrames(file):
                     else:
                         print(j, ": Syntax error: lstk (Load Stack): could not find stack variable by name", var)
                         return
-                
+
                 sstk = re.match("[^#]:*\s*sstk\s+", line)
                 if sstk:
                     if not useStack:
@@ -165,66 +165,66 @@ def buildStackFrames(file):
                     else:
                         print(j, ": Syntax error: sstk (Store Stack): could not find stack variable by name", var)
                         return
-                    
+
                 for alias in local_alias:
                     line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
                 for alias in aliases:
                     line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
-                
+
                 code_lines.append(line)
             if (re.match("(?:[^#]*:)?\s*jr\s+", code_lines[-1])):
                 print(i, ": Warning: code tagged with @FUNCTION tag ends with a jump instruction")
-            
+
             head_idx = function_head - func_start
             if len(aliases) > 0:
                 code_lines.insert(head_idx, "\t## End aliases\t-- emips.py\n\n")
                 code_lines.insert(head_idx, "\t##\n")
-                
+
                 for x in aliases:
                     code_lines.insert(head_idx, "\t##\t{} = {}\n".format(x[1], x[0]))
-                
+
                 code_lines.insert(head_idx, "\t##\n")
                 code_lines.insert(head_idx, "\t## Aliases\t-- emips.py\n")
-            
+
             cleanup_code = []
-            
+
             if useStack:
                 code_lines.insert(head_idx, "\t## End stack setup\t-- emips.py\n\n")
                 code_lines.insert(head_idx, "\t##\n")
-                
+
                 cleanup_code.append("\n\t## Stack teardown\t-- emips.py\n")
                 cleanup_code.append("\t##\n")
-                
+
                 for x in stack_inserts:
                     code_lines.insert(head_idx, "\tsw\t{}, {}($sp)\n".format(x, str(stack[x])))
                     cleanup_code.append("\tlw\t{}, {}($sp)\n".format(x, str(stack[x])))
-                    
+
                 code_lines.insert(head_idx, "\tsw\t$ra, 0($sp)\n")
                 code_lines.insert(head_idx, "\taddi\t$sp, $sp, -{}\n".format(str(stackSize)))
-                
+
                 for x in stack_varnames:
                     code_lines.insert(head_idx, "\t## Index {}\tVariable {}\n".format(str(stack[x]), x))
-                    
+
                 code_lines.insert(head_idx, "\t##\n")
                 code_lines.insert(head_idx, "\t## Stack setup\t-- emips.py\n")
-            
-                
+
+
                 cleanup_code.append("\tlw\t$ra, 0($sp)\n")
                 cleanup_code.append("\taddi\t$sp, $sp, {}\n".format(str(stackSize)))
                 cleanup_code.append("\t##\n")
                 cleanup_code.append("\t## End stack teardown\t-- emips.py\n\n")
-            
+
             cleanup_code.append("\tjr\t$ra\n")
-            
+
             for k in range(len(code_lines) - 1, -1, -1):
-                
+
                 if code_lines[k].strip().lower().startswith("@return"):
                     code_lines[k:k+1] = cleanup_code
-            
+
             functions[function_name] = code_lines
             original_length = i - func_start + 1
             len_diff = original_length - len(code_lines)
-            
+
             file[func_start:i + 1] = code_lines;
             i -= len_diff
         i += 1
@@ -252,12 +252,12 @@ if __name__ == "__main__":
     while (line):
         fileLines.append(line)
         line = inputFile.readline()
-    
+
     outputFileLines = buildStackFrames(fileLines)
     if outputFileLines:
         outputFName = re.sub(".fs$", ".s", inputFName);
         if inputFName.endswith(".s"):
             outputFName = input("Enter name for output file: ")
-        
+
         outputFile = open(outputFName, 'w')
         outputFile.write(''.join(outputFileLines))
