@@ -27,12 +27,43 @@ def buildStackFrames(file):
             else:
                 print(i, ": Syntax error: Expected function name after @FUNCTION declaration, declare name=<fname>")
                 return
+            
             useStack = False
             stack = {"ra": 0} # Key: localName, value: offset
             stack_varnames = ["ra"]
             stack_inserts = []
-            aliases = []
             stackSize = 4
+            
+            interrupt_handler = False
+            ih_address_name = -1
+            ih_space = -1
+            interrupt_handler_match = re.search("\s+interrupt_space\s*=\s*((\d+)|(auto))", line)
+            if interrupt_handler_match:
+                print(i, ": [DEBUG] Interrupt handler found")
+                interrupt_handler = True
+                space = interrupt_handler_match.group(0).split("=", 1)[1].strip()
+                
+                if space == "auto":
+                    ih_space = -1
+                else:
+                    try:
+                        if int(space) % 4:
+                            print(i, ": Syntax error: Stack allocations (for IH space) must be in multiples of 4, support for byte allocations may be added later")
+                            return
+                    except:
+                        print(i, ': Syntax error: Stack allocation size (for IH space) must be an integer or "auto", found ', size)
+                        return
+                    ih_space = int(space)
+                
+                ih_address_name = "EMIPS_{}_SPACE".format(function_name)
+                
+                useStack = True
+                stack = {"$at": 0}
+                stack_varnames = ["$at"]
+                stackSize = 4
+                
+            
+            aliases = []
             code_lines = []
             i += 1
             line = file[i]
@@ -112,7 +143,11 @@ def buildStackFrames(file):
             # Replacing all the things, and local aliasing
 
             local_alias = []
-
+            
+            stkptr = "sp";
+            if interrupt_handler:
+                stkptr = "k0"
+            
             for j in range(func_start + 1, i):
                 line = file[j]
                 interpret = line.strip()
@@ -145,7 +180,7 @@ def buildStackFrames(file):
                         return
                     var = lstk_inst[2]
                     if var in stack:
-                        line = "\tlw\t{}, {}($sp)\n".format(lstk_inst[1], stack[var])
+                        line = "    lw      {}, {}(${})\n".format(lstk_inst[1], stack[var], stkptr)
                     else:
                         print(j, ": Syntax error: lstk (Load Stack): could not find stack variable by name", var)
                         return
@@ -161,7 +196,7 @@ def buildStackFrames(file):
                         return
                     var = sstk_inst[2]
                     if var in stack:
-                        line = "\tsw\t{}, {}($sp)\n".format(sstk_inst[1], stack[var])
+                        line = "    sw      {}, {}(${})\n".format(sstk_inst[1], stack[var], stkptr)
                     else:
                         print(j, ": Syntax error: sstk (Store Stack): could not find stack variable by name", var)
                         return
@@ -177,50 +212,82 @@ def buildStackFrames(file):
 
             head_idx = function_head - func_start
             if len(aliases) > 0:
-                code_lines.insert(head_idx, "\t## End aliases\t-- emips.py\n\n")
-                code_lines.insert(head_idx, "\t##\n")
+                code_lines.insert(head_idx, "    ## End aliases  -- emips.py\n\n")
+                code_lines.insert(head_idx, "    ##\n")
 
                 for x in aliases:
-                    code_lines.insert(head_idx, "\t##\t{} = {}\n".format(x[1], x[0]))
+                    code_lines.insert(head_idx, "    ##    {} = {}\n".format(x[1], x[0]))
 
-                code_lines.insert(head_idx, "\t##\n")
-                code_lines.insert(head_idx, "\t## Aliases\t-- emips.py\n")
+                code_lines.insert(head_idx, "    ##\n")
+                code_lines.insert(head_idx, "    ## Aliases      -- emips.py\n")
 
             cleanup_code = []
 
             if useStack:
-                code_lines.insert(head_idx, "\t## End stack setup\t-- emips.py\n\n")
-                code_lines.insert(head_idx, "\t##\n")
+                code_lines.insert(head_idx, "    ## End stack setup  -- emips.py\n\n")
+                code_lines.insert(head_idx, "    ##\n")
+                
+                if interrupt_handler:
+                    code_lines.insert(head_idx, "    sw      $k1, 0($k0)\n")
 
-                cleanup_code.append("\n\t## Stack teardown\t-- emips.py\n")
-                cleanup_code.append("\t##\n")
+                cleanup_code.append("\n    ## Stack teardown       -- emips.py\n")
+                cleanup_code.append("    ##\n")
+                
+                if interrupt_handler:
+                    cleanup_code.append("    la      $k0, {}\n".format(ih_address_name))
 
                 for x in stack_inserts:
-                    code_lines.insert(head_idx, "\tsw\t{}, {}($sp)\n".format(x, str(stack[x])))
-                    cleanup_code.append("\tlw\t{}, {}($sp)\n".format(x, str(stack[x])))
+                    code_lines.insert(head_idx, "    sw      {}, {}(${})\n".format(x, str(stack[x]), stkptr))
+                    cleanup_code.append("    lw      {}, {}(${})\n".format(x, str(stack[x]), stkptr))
 
-                code_lines.insert(head_idx, "\tsw\t$ra, 0($sp)\n")
-                code_lines.insert(head_idx, "\taddi\t$sp, $sp, -{}\n".format(str(stackSize)))
+                if not interrupt_handler:
+                    code_lines.insert(head_idx, "    sw      $ra, 0($sp)\n")
+                    code_lines.insert(head_idx, "    addi    $sp, $sp, -{}\n".format(str(stackSize)))
 
                 for x in stack_varnames:
-                    code_lines.insert(head_idx, "\t## Index {}\tVariable {}\n".format(str(stack[x]), x))
+                    code_lines.insert(head_idx, "    ## Index {}\tVariable {}\n".format(str(stack[x]), x))
+                
+                if interrupt_handler:
+                    code_lines.insert(head_idx, "    la      $k0, {}\n".format(ih_address_name))
+                    code_lines.insert(head_idx, ".set at\n")
+                    code_lines.insert(head_idx, "    move    $k1, $at\n")
+                    code_lines.insert(head_idx, ".set noat\n")
 
-                code_lines.insert(head_idx, "\t##\n")
-                code_lines.insert(head_idx, "\t## Stack setup\t-- emips.py\n")
+                code_lines.insert(head_idx, "    ##\n")
+                code_lines.insert(head_idx, "    ## Stack setup      -- emips.py\n")
+                
+                if interrupt_handler:
+                    if ih_space == -1:
+                        ih_space = stackSize
+                    code_lines.insert(0, "{}:  .space {}\n".format(ih_address_name, ih_space))
+                    code_lines.insert(0, ".kdata\n")
 
 
-                cleanup_code.append("\tlw\t$ra, 0($sp)\n")
-                cleanup_code.append("\taddi\t$sp, $sp, {}\n".format(str(stackSize)))
-                cleanup_code.append("\t##\n")
-                cleanup_code.append("\t## End stack teardown\t-- emips.py\n\n")
+                if interrupt_handler:
+                    cleanup_code.append(".set noat\n")
+                    cleanup_code.append("    lw      $at, 0($k0)\n")
+                    cleanup_code.append(".set at\n")
+                else:
+                    cleanup_code.append("    lw      $ra, 0($sp)\n")
+                    cleanup_code.append("    addi    $sp, $sp, {}\n".format(str(stackSize)))
+                
+                cleanup_code.append("    ##\n")
+                cleanup_code.append("    ## End stack teardown   -- emips.py\n\n")
 
-            cleanup_code.append("\tjr\t$ra\n")
+            if interrupt_handler:
+                cleanup_code.append("    eret\n")
+            else:
+                cleanup_code.append("    jr      $ra\n")
 
+            hasReturn = False
             for k in range(len(code_lines) - 1, -1, -1):
-
                 if code_lines[k].strip().lower().startswith("@return"):
                     code_lines[k:k+1] = cleanup_code
-
+                    hasReturn = True
+            
+            if not hasReturn:
+                print(func_start, ": Warning: code tagged with @FUNCTION tag does not contain an @RETURN tag")
+            
             functions[function_name] = code_lines
             original_length = i - func_start + 1
             len_diff = original_length - len(code_lines)
