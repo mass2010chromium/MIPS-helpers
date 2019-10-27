@@ -32,15 +32,12 @@ def buildStackFrames(file_lines, filename, debug):
                         line = inputFile.readline()
                 if included_file_name.endswith(".fs"):
                     fileLines = buildStackFrames(fileLines, included_file_name, debug)
-                    if debug:
-                        for x in fileLines:
-                            print(x)
-                    if fileLines:
-                        file_lines[i:i+1] = fileLines
-                        i += len(fileLines) - 1
-                    else:
-                        print("{}:{}: Failed to parse included file {}".format(filename, fline, included_file_name))
-                        return
+                if fileLines:
+                    file_lines[i:i+1] = fileLines
+                    i += len(fileLines) - 1
+                else:
+                    print("{}:{}: Failed to parse included file {}".format(filename, fline, included_file_name))
+                    return
                 
             else:
                 print(fline, ": Syntax error: Malformed #include statement")
