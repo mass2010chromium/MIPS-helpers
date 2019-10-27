@@ -19,7 +19,7 @@ def buildStackFrames(file_lines, filename, debug):
         line = file_lines[i]
         line = line.strip();
         if line.startswith(("#include", "#INCLUDE")):
-            include_match = re.match("#(include|INCLUDE)\s+([^\s#]+)")
+            include_match = re.match("#(include|INCLUDE)\s+([^\s#]+)", line)
             if include_match:
                 included_file_name = include_match[2]
                 if debug:
