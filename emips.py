@@ -11,17 +11,17 @@ class Function:
 Pass me a list of lines in a file!
 For now not compatible with inliner.py.
 '''
-def buildStackFrames(file, filename, debug):
+def buildStackFrames(file_lines, filename, debug):
     functions = {} # Key: function name, value: the function. TODO: Possible inlining?
     i = 0
     fline = 0
-    while (i < len(file)):
-        line = file[i]
+    while (i < len(file_lines)):
+        line = file_lines[i]
         line = line.strip();
         if line.startswith(("#include", "#INCLUDE")):
-            include_match = re.match("#(?include|INCLUDE)\s+([^\s#]+)")
+            include_match = re.match("#(include|INCLUDE)\s+([^\s#]+)")
             if include_match:
-                included_file_name = include_match[0]
+                included_file_name = include_match[2]
                 if debug:
                     print("{}:{}: [DEBUG] #include {}".format(filename, fline, included_file_name))
                 fileLines = []
@@ -33,7 +33,7 @@ def buildStackFrames(file, filename, debug):
                 if included_file_name.endswith(".fs"):
                     fileLines = buildStackFrames(fileLines, included_file_name, debug)
                     if fileLines:
-                        file[i:i+1] = fileLines
+                        file_lines[i:i+1] = fileLines
                         i += len(fileLines) - 1
                     else:
                         print("{}:{}: Failed to parse included file {}".format(filename, fline, included_file_name))
@@ -94,7 +94,7 @@ def buildStackFrames(file, filename, debug):
             code_lines = []
             i += 1
             fline += 1
-            line = file[i]
+            line = file_lines[i]
             function_head = -1
             while (not line.strip().startswith(("!FUNCTION", "!function"))):
                 interpret = line.strip()
@@ -162,10 +162,10 @@ def buildStackFrames(file, filename, debug):
                     function_head = i
                 i += 1
                 fline += 1
-                if i == len(file):
+                if i == len(file_lines):
                     print("{}:{}: Syntax error: Expected closing !FUNCTION tag for @FUNCTION declaration at {}".format(filename, fline, fline_func_start))
                     return
-                line = file[i]
+                line = file_lines[i]
 
             if function_head == -1:
                 print("{}:{}: Syntax error: Did not find function start for @FUNCTION declaration at {}".format(filename, fline, fline_func_start))
@@ -182,7 +182,7 @@ def buildStackFrames(file, filename, debug):
             func_fline = fline_func_start
             for j in range(func_start + 1, i):
                 func_fline += 1
-                line = file[j]
+                line = file_lines[j]
                 interpret = line.strip()
                 if interpret.startswith(".stackalloc") or interpret.startswith(".alias ") or interpret.startswith(".stacksave "):
                     continue
@@ -328,11 +328,11 @@ def buildStackFrames(file, filename, debug):
             original_length = i - func_start + 1
             len_diff = original_length - len(code_lines)
 
-            file[func_start:i + 1] = code_lines;
+            file_lines[func_start:i + 1] = code_lines;
             i -= len_diff
         i += 1
         fline += 1
-    return file
+    return file_lines
 
 if __name__ == "__main__":
     inputFName = -1
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     i = 0
     while i < len(sys.argv):
         arg = sys.argv[i]
-        i++
+        i += 1
         if arg == __file__:
             continue;
         if arg == '--debug':
@@ -352,7 +352,7 @@ if __name__ == "__main__":
                 print("Missing command line argument for output file name, ignoring '-o'")
             else:
                 arg = sys.argv[i]
-                i++
+                i += 1
                 outputFName = arg
                 print("    -o {}".format(outputFName))
             continue
