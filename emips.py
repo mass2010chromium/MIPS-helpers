@@ -11,21 +11,47 @@ class Function:
 Pass me a list of lines in a file!
 For now not compatible with inliner.py.
 '''
-def buildStackFrames(file):
-    functions = {} # Key: function name, value: the function
+def buildStackFrames(file, filename, debug):
+    functions = {} # Key: function name, value: the function. TODO: Possible inlining?
     i = 0
+    fline = 0
     while (i < len(file)):
         line = file[i]
         line = line.strip();
-        if line.startswith(("@FUNCTION", "@function")):
-            func_start = i;
+        if line.startswith(("#include", "#INCLUDE")):
+            include_match = re.match("#(?include|INCLUDE)\s+([^\s#]+)")
+            if include_match:
+                included_file_name = include_match[0]
+                if debug:
+                    print("{}:{}: [DEBUG] #include {}".format(filename, fline, included_file_name))
+                fileLines = []
+                with open(included_file_name, 'r') as inputFile:
+                    line = inputFile.readline()
+                    while (line):
+                        fileLines.append(line)
+                        line = inputFile.readline()
+                if included_file_name.endswith(".fs"):
+                    fileLines = buildStackFrames(fileLines, included_file_name, debug)
+                    if fileLines:
+                        file[i:i+1] = fileLines
+                        i += len(fileLines) - 1
+                    else:
+                        print("{}:{}: Failed to parse included file {}".format(filename, fline, included_file_name))
+                        return
+                
+            else:
+                print(fline, ": Syntax error: Malformed #include statement")
+                return
+        elif line.startswith(("@FUNCTION", "@function")):
+            func_start = i
+            fline_func_start = fline
             fname_match = re.search('\s+name\s*=\s*[a-zA-Z][^\s#]*', line)
             function_name = -1
             if (fname_match):
                 function_name = fname_match.group(0).split("=", 1)[1].strip()
                 # print(function_name)
             else:
-                print(i, ": Syntax error: Expected function name after @FUNCTION declaration, declare name=<fname>")
+                print("{}:{}: Syntax error: Expected function name after @FUNCTION declaration, declare name=<fname>".format(filename, fline))
                 return
             
             useStack = False
@@ -39,7 +65,8 @@ def buildStackFrames(file):
             ih_space = -1
             interrupt_handler_match = re.search("\s+interrupt_space\s*=\s*((\d+)|(auto))", line)
             if interrupt_handler_match:
-                print(i, ": [DEBUG] Interrupt handler found")
+                if debug:
+                    print("{}:{}: [DEBUG] Interrupt handler found".format(filename, fline))
                 interrupt_handler = True
                 space = interrupt_handler_match.group(0).split("=", 1)[1].strip()
                 
@@ -48,10 +75,10 @@ def buildStackFrames(file):
                 else:
                     try:
                         if int(space) % 4:
-                            print(i, ": Syntax error: Stack allocations (for IH space) must be in multiples of 4, support for byte allocations may be added later")
+                            print("{}:{}: Syntax error: Stack allocations (for IH space) must be in multiples of 4, support for byte allocations may be added later".format(filename, fline))
                             return
                     except:
-                        print(i, ': Syntax error: Stack allocation size (for IH space) must be an integer or "auto", found ', size)
+                        print('{}:{}: Syntax error: Stack allocation size (for IH space) must be an integer or "auto", found {}'.format(filename, fline, size))
                         return
                     ih_space = int(space)
                 
@@ -66,19 +93,23 @@ def buildStackFrames(file):
             aliases = []
             code_lines = []
             i += 1
+            fline += 1
             line = file[i]
             function_head = -1
             while (not line.strip().startswith(("!FUNCTION", "!function"))):
                 interpret = line.strip()
+                if interpret.startswith(("#include", "#INCLUDE")):
+                    print("{}:{}: Syntax error: #include symbol found inside a function block".format(filename, fline))
+                    return
                 if interpret.startswith(".stacksave "):
                     if (function_head == -1):
-                        print(i, ": Syntax error: .stacksave symbol found before function_head")
+                        print("{}:{}: Syntax error: .stacksave symbol found before function_head".format(filename, fline))
                         return
                     useStack = True
                     stack_vars = re.findall('[^\s]+', line)[1:]
                     for x in stack_vars:
                         if not x.startswith("$"):
-                            print(i, ": Syntax error: .stacksave requires a list of registers to save but found ", x)
+                            print("{}:{}: Syntax error: .stacksave requires a list of registers to save but found {}".format(filename, fline, x))
                             return
                         stack_varnames.append(x)
                         stack[x] = stackSize
@@ -86,7 +117,7 @@ def buildStackFrames(file):
                         stack_inserts.append(x)
                 elif interpret.startswith(".stackalloc"):
                     if (function_head == -1):
-                        print(i, ": Syntax error: .stackalloc symbol found before function_head")
+                        print("{}:{}: Syntax error: .stackalloc symbol found before function_head".format(filename, fline))
                         return
                     useStack = True
                     stack_vars = re.findall('[^\s]+', line)[1:]
@@ -98,20 +129,20 @@ def buildStackFrames(file):
                             name = split_var[2]
                             try:
                                 if int(size) % 4:
-                                    print(i, ": Syntax error: Stack allocations must be in multiples of 4, support for byte allocations may be added later")
+                                    print("{}:{}: Syntax error: Stack allocations must be in multiples of 4, support for byte allocations may be added later".format(filename, fline))
                                     return
                             except:
-                                print(i, ": Syntax error: Stack allocation size must be an integer, found ", size)
+                                print("{}:{}: Syntax error: Stack allocation size must be an integer, found {}".format(filename, fline, size))
                                 return
                             stack[name] = stackSize
                             stackSize += int(size)
                             stack_varnames.append(name)
                         else:
-                            print(i, ": Syntax error: Bad stack alloc declaration ", x, ", expected [ (bytesize)vname ]")
+                            print("{}:{}: Syntax error: Bad stack alloc declaration {}, expected [ (bytesize)vname ]".format(filename, fline, x))
                             return
                 elif interpret.startswith(".alias "):
                     if (function_head == -1):
-                        print(i, ": Syntax error: .alias symbol found before function_head")
+                        print("{}:{}: Syntax error: .alias symbol found before function_head".format(filename, fline))
                         return
                     alias_vars = re.findall('[^\s]+', line)[1:]
                     for x in alias_vars:
@@ -121,22 +152,23 @@ def buildStackFrames(file):
                             name = split_var[2]
                             aliases.append((name, reg))
                         else:
-                            print(i, ": Syntax error: Bad alias declaration ", x, ", expected [ (register)vname ]")
+                            print("{}:{}: Syntax error: Bad alias declaration {}, expected [ (register)vname ]".format(filename, fline, x))
                             return
 
                 elif interpret.startswith(function_name + ":"):
                     if function_head != -1:
-                        print(i, ": Syntax error: Duplicate function label declaration, first seen at ", str(function_head))
+                        print("{}:{}: Syntax error: Duplicate function label declaration, first seen at {}".format(filename, fline, function_head))
                         return
                     function_head = i
                 i += 1
+                fline += 1
                 if i == len(file):
-                    print(i, ": Syntax error: Expected closing !FUNCTION tag for @FUNCTION declaration at ", func_start)
+                    print("{}:{}: Syntax error: Expected closing !FUNCTION tag for @FUNCTION declaration at {}".format(filename, fline, fline_func_start))
                     return
                 line = file[i]
 
             if function_head == -1:
-                print(i, ": Syntax error: Did not find function start for @FUNCTION declaration at ", func_start)
+                print("{}:{}: Syntax error: Did not find function start for @FUNCTION declaration at {}".format(filename, fline, fline_func_start))
                 return
 
 
@@ -147,8 +179,9 @@ def buildStackFrames(file):
             stkptr = "sp";
             if interrupt_handler:
                 stkptr = "k0"
-            
+            func_fline = fline_func_start
             for j in range(func_start + 1, i):
+                func_fline += 1
                 line = file[j]
                 interpret = line.strip()
                 if interpret.startswith(".stackalloc") or interpret.startswith(".alias ") or interpret.startswith(".stacksave "):
@@ -162,7 +195,7 @@ def buildStackFrames(file):
                             name = split_var[2]
                             local_alias.append((name, reg))
                         else:
-                            print(j, ": Syntax error: Bad aliaslocal declaration ", x, ", expected [ (register)vname ]")
+                            print("{}:{}: Syntax error: Bad aliaslocal declaration {}, expected [ (register)vname ]".format(filename, func_fline, x))
                             return
 
                     continue
@@ -172,33 +205,33 @@ def buildStackFrames(file):
                 lstk = re.match("[^#]:*\s*lstk\s+", line)
                 if lstk:
                     if not useStack:
-                        print(j, ": Syntax error: lstk (Load Stack) pseudoinstruction used without a stack initialization")
+                        print("{}:{}: Syntax error: lstk (Load Stack) pseudoinstruction used without a stack initialization".format(filename, func_fline))
                         return
                     lstk_inst = re.search("lstk\s+(\$[^\s,]+),\s+([^\s#]*)", line)
                     if not lstk_inst:
-                        print(j, ": Syntax error: lstk (Load Stack) pseudoinstruction is malformed")
+                        print("{}:{}: Syntax error: lstk (Load Stack) pseudoinstruction is malformed".format(filename, func_fline))
                         return
                     var = lstk_inst[2]
                     if var in stack:
                         line = "    lw      {}, {}(${})\n".format(lstk_inst[1], stack[var], stkptr)
                     else:
-                        print(j, ": Syntax error: lstk (Load Stack): could not find stack variable by name", var)
+                        print("{}:{}: Syntax error: lstk (Load Stack): could not find stack variable by name {}".format(filename, func_fline, var))
                         return
 
                 sstk = re.match("[^#]:*\s*sstk\s+", line)
                 if sstk:
                     if not useStack:
-                        print(j, ": Syntax error: sstk (Store Stack) pseudoinstruction used without a stack initialization")
+                        print("{}:{}: Syntax error: sstk (Store Stack) pseudoinstruction used without a stack initialization".format(filename, func_fline))
                         return
                     sstk_inst = re.search("sstk\s+(\$[^\s,]+),\s+([^\s#]*)", line)
                     if not sstk_inst:
-                        print(j, ": Syntax error: sstk (Store Stack) pseudoinstruction is malformed")
+                        print("{}:{}: Syntax error: sstk (Store Stack) pseudoinstruction is malformed".format(filename, func_fline))
                         return
                     var = sstk_inst[2]
                     if var in stack:
                         line = "    sw      {}, {}(${})\n".format(sstk_inst[1], stack[var], stkptr)
                     else:
-                        print(j, ": Syntax error: sstk (Store Stack): could not find stack variable by name", var)
+                        print("{}:{}: Syntax error: sstk (Store Stack): could not find stack variable by name {}".format(filename, func_fline, var))
                         return
 
                 for alias in local_alias:
@@ -207,8 +240,9 @@ def buildStackFrames(file):
                     line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
 
                 code_lines.append(line)
+                
             if (re.match("(?:[^#]*:)?\s*jr\s+", code_lines[-1])):
-                print(i, ": Warning: code tagged with @FUNCTION tag ends with a jump instruction")
+                print(fline, ": Warning: code tagged with @FUNCTION tag ends with a jump instruction")
 
             head_idx = function_head - func_start
             if len(aliases) > 0:
@@ -259,6 +293,8 @@ def buildStackFrames(file):
                 if interrupt_handler:
                     if ih_space == -1:
                         ih_space = stackSize
+                    elif ih_space < stackSize:
+                        print("{}:{}: Warning: Manually allocated instruction handler space is not large enough to fit all allocated local variables".format(filename, fline))
                     code_lines.insert(0, "{}:  .space {}\n".format(ih_address_name, ih_space))
                     code_lines.insert(0, ".kdata\n")
 
@@ -286,7 +322,7 @@ def buildStackFrames(file):
                     hasReturn = True
             
             if not hasReturn:
-                print(func_start, ": Warning: code tagged with @FUNCTION tag does not contain an @RETURN tag")
+                print("{}:{}: Warning: code tagged with @FUNCTION tag does not contain an @RETURN tag".format(filename, fline_func_start))
             
             functions[function_name] = code_lines
             original_length = i - func_start + 1
@@ -295,36 +331,51 @@ def buildStackFrames(file):
             file[func_start:i + 1] = code_lines;
             i -= len_diff
         i += 1
+        fline += 1
     return file
 
 if __name__ == "__main__":
     inputFName = -1
-    no_debug = False
-
-    for arg in sys.argv:
+    outputFName = -1;
+    debug = False
+    i = 0
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        i++
         if arg == __file__:
             continue;
-        if arg == '--no-debug':
-            no_debug = True
+        if arg == '--debug':
+            debug = True
             continue;
+        if arg == '-o':
+            if i == len(sys.argv):
+                print("Missing command line argument for output file name, ignoring '-o'")
+            else:
+                arg = sys.argv[i]
+                i++
+                outputFName = arg
+                print("    -o {}".format(outputFName))
+            continue
         inputFName = arg;
 
     if inputFName == -1:
         inputFName = input("Input file: ")
     print("Reading file:", inputFName)
 
-    inputFile = open(inputFName, 'r')
-    fileLines = []
-    line = inputFile.readline()
-    while (line):
-        fileLines.append(line)
+    with open(inputFName, 'r') as inputFile:
+        fileLines = []
         line = inputFile.readline()
+        while (line):
+            fileLines.append(line)
+            line = inputFile.readline()
 
-    outputFileLines = buildStackFrames(fileLines)
+    outputFileLines = buildStackFrames(fileLines, inputFName, debug)
     if outputFileLines:
-        outputFName = re.sub(".fs$", ".s", inputFName);
-        if inputFName.endswith(".s"):
-            outputFName = input("Enter name for output file: ")
+        if outputFName == -1:
+            if inputFName.endswith(".fs"):
+                outputFName = re.sub(".fs$", ".s", inputFName);
+            else:
+                outputFName = input("Enter name for output file: ")
 
-        outputFile = open(outputFName, 'w')
-        outputFile.write(''.join(outputFileLines))
+        with open(outputFName, 'w') as outputFile:
+            outputFile.write(''.join(outputFileLines))
