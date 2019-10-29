@@ -281,11 +281,11 @@ def buildStackFrames(file_lines, filename, debug):
                 
                 if interrupt_handler:
                     if k0_warning & 2:
+                        cleanup_code.append("    la      $k0, {}\n".format(ih_address_name))
+                    else:
                         # Don't reload $k0 if we haven't even seen it!
                         if debug:
                             print("{}:{}: [DEBUG] Not loading address into $k0, because it wasn't touched in the code.".format(filename, fline))
-                    else:
-                        cleanup_code.append("    la      $k0, {}\n".format(ih_address_name))
 
                 for x in stack_inserts:
                     code_lines.insert(head_idx, "    sw      {}, {}(${})\n".format(x, str(stack[x]), stkptr))
