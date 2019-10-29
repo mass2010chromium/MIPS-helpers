@@ -17,7 +17,7 @@ def buildStackFrames(file_lines, filename, debug):
     fline = 0
     while (i < len(file_lines)):
         line = file_lines[i]
-        line = line.strip();
+        line = line.strip()
         if line.startswith(("#include", "#INCLUDE")):
             include_match = re.match("#(include|INCLUDE)\s+([^\s#]+)", line)
             if include_match:
@@ -176,9 +176,11 @@ def buildStackFrames(file_lines, filename, debug):
 
             local_alias = []
             
-            stkptr = "sp";
+            stkptr = "sp"
+            k0_warning = 0 # Bit 0: Interrupt handler or not. Bit 1: Seen $k0 or not. Bit 2: Seen lstk/sstk or not.
             if interrupt_handler:
                 stkptr = "k0"
+                k0_warning = 1
             func_fline = fline_func_start
             for j in range(func_start + 1, i):
                 func_fline += 1
@@ -186,6 +188,7 @@ def buildStackFrames(file_lines, filename, debug):
                 interpret = line.strip()
                 if interpret.startswith(".stackalloc") or interpret.startswith(".alias ") or interpret.startswith(".stacksave "):
                     continue
+                
                 if interpret.startswith(".aliaslocal "):
                     alias_vars = re.findall('[^\s]+', line)[1:]
                     for x in alias_vars:
@@ -199,9 +202,13 @@ def buildStackFrames(file_lines, filename, debug):
                             return
 
                     continue
-                if interpret.startswith(".clear"):
+                elif interpret.startswith(".clear"):
                     local_alias = []
-                    continue;
+                    continue
+                
+                if re.match("(\$k0(?=[\s#,]|$))", interpret.split("#")[0]):
+                    k0_warning |= 2
+
                 lstk = re.match("[^#]:*\s*lstk\s+", line)
                 if lstk:
                     if not useStack:
@@ -217,6 +224,7 @@ def buildStackFrames(file_lines, filename, debug):
                     else:
                         print("{}:{}: Syntax error: lstk (Load Stack): could not find stack variable by name {}".format(filename, func_fline, var))
                         return
+                    k0_warning |= 4
 
                 sstk = re.match("[^#]:*\s*sstk\s+", line)
                 if sstk:
@@ -233,14 +241,18 @@ def buildStackFrames(file_lines, filename, debug):
                     else:
                         print("{}:{}: Syntax error: sstk (Store Stack): could not find stack variable by name {}".format(filename, func_fline, var))
                         return
+                    k0_warning |= 4
 
                 for alias in local_alias:
-                    line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
+                    line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line)
                 for alias in aliases:
-                    line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line);
+                    line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line)
 
                 code_lines.append(line)
                 
+            if k0_warning == 7:
+                print("{}:{}: Warning: lstk or sstk (Load/Store Stack) command detected in interrupt handler code that uses $k0".format(filename, fline))
+
             if (re.match("(?:[^#]*:)?\s*jr\s+", code_lines[-1])):
                 print(fline, ": Warning: code tagged with @FUNCTION tag ends with a jump instruction")
 
@@ -268,7 +280,12 @@ def buildStackFrames(file_lines, filename, debug):
                 cleanup_code.append("    ##\n")
                 
                 if interrupt_handler:
-                    cleanup_code.append("    la      $k0, {}\n".format(ih_address_name))
+                    if k0_warning & 2:
+                        # Don't reload $k0 if we haven't even seen it!
+                        if debug:
+                            print("{}:{}: [DEBUG] Not loading address into $k0, because it wasn't touched in the code.".format(filename, fline))
+                    else:
+                        cleanup_code.append("    la      $k0, {}\n".format(ih_address_name))
 
                 for x in stack_inserts:
                     code_lines.insert(head_idx, "    sw      {}, {}(${})\n".format(x, str(stack[x]), stkptr))
@@ -328,7 +345,7 @@ def buildStackFrames(file_lines, filename, debug):
             original_length = i - func_start + 1
             len_diff = original_length - len(code_lines)
 
-            file_lines[func_start:i + 1] = code_lines;
+            file_lines[func_start:i + 1] = code_lines
             i -= len_diff
         i += 1
         fline += 1
@@ -336,17 +353,17 @@ def buildStackFrames(file_lines, filename, debug):
 
 if __name__ == "__main__":
     inputFName = -1
-    outputFName = -1;
+    outputFName = -1
     debug = False
     i = 0
     while i < len(sys.argv):
         arg = sys.argv[i]
         i += 1
         if arg == __file__:
-            continue;
+            continue
         if arg == '--debug':
             debug = True
-            continue;
+            continue
         if arg == '-o':
             if i == len(sys.argv):
                 print("Missing command line argument for output file name, ignoring '-o'")
@@ -356,7 +373,10 @@ if __name__ == "__main__":
                 outputFName = arg
                 print("    -o {}".format(outputFName))
             continue
-        inputFName = arg;
+        if inputFName == -1:
+            inputFName = arg
+            continue
+        print("ignoring extra argument " + arg);
 
     if inputFName == -1:
         inputFName = input("Input file: ")
@@ -373,7 +393,7 @@ if __name__ == "__main__":
     if outputFileLines:
         if outputFName == -1:
             if inputFName.endswith(".fs"):
-                outputFName = re.sub(".fs$", ".s", inputFName);
+                outputFName = re.sub(".fs$", ".s", inputFName)
             else:
                 outputFName = input("Enter name for output file: ")
 
