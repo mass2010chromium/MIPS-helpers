@@ -123,7 +123,7 @@ def buildStackFrames(file_lines, filename, debug):
                     stack_vars = re.findall('[^\s]+', line)[1:]
                     # stack_vars = re.findall('\s+[(]\d+[)][a-zA-Z][^\s#]*', line)
                     for x in stack_vars:
-                        split_var = re.match("([(]\d+[)])([a-zA-Z][^\s#]*)", x.strip())
+                        split_var = re.match("([(]\d+[)])([a-zA-Z_][^\s#]*)", x.strip())
                         if split_var:
                             size = split_var[1][1:-1]
                             name = split_var[2]
@@ -146,7 +146,7 @@ def buildStackFrames(file_lines, filename, debug):
                         return
                     alias_vars = re.findall('[^\s]+', line)[1:]
                     for x in alias_vars:
-                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z][^\s#]*)", x.strip())
+                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z_][^\s#]*)", x.strip())
                         if split_var:
                             reg = split_var[1][1:-1]
                             name = split_var[2]
@@ -192,7 +192,7 @@ def buildStackFrames(file_lines, filename, debug):
                 if interpret.startswith(".aliaslocal "):
                     alias_vars = re.findall('[^\s]+', line)[1:]
                     for x in alias_vars:
-                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z][^\s#]*)", x.strip())
+                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z_][^\s#]*)", x.strip())
                         if split_var:
                             reg = split_var[1][1:-1]
                             name = split_var[2]
@@ -209,12 +209,24 @@ def buildStackFrames(file_lines, filename, debug):
                 if re.match("(\$k0(?=[\s#,]|$))", interpret.split("#")[0]):
                     k0_warning |= 2
 
+                la = re.match("[^#]:*\s*la\s+", line)
+                if la:
+                    # Process special la command!
+                    la_inst = re.search("la\s+(\$[^\s,]+),\s+([a-zA-Z_][^\s#()]*)", line)
+                    if la_inst:
+                        var = la_inst[2]
+                        if var in stack:
+                            if debug:
+                                print("{}:{}: [DEBUG] Found load stack address instruction, loading stack address {}".format(filename, func_fline, var))
+                            line = "    addi    {}, {}, {}\n".format(la_inst[1], stkptr, stack[var])
+
+
                 lstk = re.match("[^#]:*\s*lstk\s+", line)
                 if lstk:
                     if not useStack:
                         print("{}:{}: Syntax error: lstk (Load Stack) pseudoinstruction used without a stack initialization".format(filename, func_fline))
                         return
-                    lstk_inst = re.search("lstk\s+(\$[^\s,]+),\s+([^\s#]*)", line)
+                    lstk_inst = re.search("lstk\s+(\$[^\s,]+),\s+(\d+[(][^\s#()]*[)]|[^\s#()]*)", line)
                     if not lstk_inst:
                         print("{}:{}: Syntax error: lstk (Load Stack) pseudoinstruction is malformed".format(filename, func_fline))
                         return
@@ -222,8 +234,13 @@ def buildStackFrames(file_lines, filename, debug):
                     if var in stack:
                         line = "    lw      {}, {}(${})\n".format(lstk_inst[1], stack[var], stkptr)
                     else:
-                        print("{}:{}: Syntax error: lstk (Load Stack): could not find stack variable by name {}".format(filename, func_fline, var))
-                        return
+                        lstk_offset = re.search("(\d+)[(]([^\s#()]*)[)]", var)
+                        if lstk_offset:
+                            extra_offset = int(lstk_offset[1])
+                            line = "    lw      {}, {}(${})\n".format(lstk_inst[1], stack[lstk_offset[2]] + extra_offset, stkptr)
+                        else:
+                            print("{}:{}: Syntax error: lstk (Load Stack): could not find stack variable by name {}".format(filename, func_fline, var))
+                            return
                     k0_warning |= 4
 
                 sstk = re.match("[^#]:*\s*sstk\s+", line)
