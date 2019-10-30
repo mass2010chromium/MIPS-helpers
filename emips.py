@@ -14,7 +14,7 @@ For now not compatible with inliner.py.
 def buildStackFrames(file_lines, filename, debug):
     functions = {} # Key: function name, value: the function. TODO: Possible inlining?
     i = 0
-    fline = 0
+    fline = 1
     while (i < len(file_lines)):
         line = file_lines[i]
         line = line.strip()
@@ -127,6 +127,8 @@ def buildStackFrames(file_lines, filename, debug):
                         if split_var:
                             size = split_var[1][1:-1]
                             name = split_var[2]
+                            if name in stack:
+                                print("{}:{}: Syntax error: Duplicate stack variable, name {}".format(filename, fline, name))
                             try:
                                 if int(size) % 4:
                                     print("{}:{}: Syntax error: Stack allocations must be in multiples of 4, support for byte allocations may be added later".format(filename, fline))
@@ -218,7 +220,7 @@ def buildStackFrames(file_lines, filename, debug):
                         if var in stack:
                             if debug:
                                 print("{}:{}: [DEBUG] Found load stack address instruction, loading stack address {}".format(filename, func_fline, var))
-                            line = "    addi    {}, {}, {}\n".format(la_inst[1], stkptr, stack[var])
+                            line = "    addi    {}, ${}, {} # {}\n".format(la_inst[1], stkptr, stack[var], line.strip())
 
 
                 lstk = re.match("[^#]:*\s*lstk\s+", line)
@@ -232,12 +234,12 @@ def buildStackFrames(file_lines, filename, debug):
                         return
                     var = lstk_inst[2]
                     if var in stack:
-                        line = "    lw      {}, {}(${})\n".format(lstk_inst[1], stack[var], stkptr)
+                        line = "    lw      {}, {}(${}) # {}\n".format(lstk_inst[1], stack[var], stkptr, line.strip())
                     else:
                         lstk_offset = re.search("(\d+)[(]([^\s#()]*)[)]", var)
                         if lstk_offset:
                             extra_offset = int(lstk_offset[1])
-                            line = "    lw      {}, {}(${})\n".format(lstk_inst[1], stack[lstk_offset[2]] + extra_offset, stkptr)
+                            line = "    lw      {}, {}(${}) # {}\n".format(lstk_inst[1], stack[lstk_offset[2]] + extra_offset, stkptr, line.strip())
                         else:
                             print("{}:{}: Syntax error: lstk (Load Stack): could not find stack variable by name {}".format(filename, func_fline, var))
                             return
@@ -254,10 +256,14 @@ def buildStackFrames(file_lines, filename, debug):
                         return
                     var = sstk_inst[2]
                     if var in stack:
-                        line = "    sw      {}, {}(${})\n".format(sstk_inst[1], stack[var], stkptr)
+                        line = "    sw      {}, {}(${}) # {}\n".format(sstk_inst[1], stack[var], stkptr, line.strip())
                     else:
-                        print("{}:{}: Syntax error: sstk (Store Stack): could not find stack variable by name {}".format(filename, func_fline, var))
-                        return
+                        sstk_offset = re.search("(\d+)[(]([^\s#()]*)[)]", var)
+                        if sstk_offset:
+                            line = "    sw      {}, {}(${}) # {}\n".format(sstk_inst[1], stack[sstk_offset[2]] + extra_offset, stkptr, line.strip())
+                        else:
+                            print("{}:{}: Syntax error: sstk (Store Stack): could not find stack variable by name {}".format(filename, func_fline, var))
+                            return
                     k0_warning |= 4
 
                 for alias in local_alias:
