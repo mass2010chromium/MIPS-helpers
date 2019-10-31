@@ -207,9 +207,6 @@ def buildStackFrames(file_lines, filename, debug):
                 elif interpret.startswith(".clear"):
                     local_alias = []
                     continue
-                
-                if re.match("(\$k0(?=[\s#,]|$))", interpret.split("#")[0]):
-                    k0_warning |= 2
 
                 la = re.match("[^#]:*\s*la\s+", line)
                 if la:
@@ -270,6 +267,9 @@ def buildStackFrames(file_lines, filename, debug):
                     line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line)
                 for alias in aliases:
                     line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line)
+
+                if re.search("(\$k0(?=[\s#,)]|$))", line.split("#")[0]):
+                    k0_warning |= 2
 
                 code_lines.append(line)
                 
