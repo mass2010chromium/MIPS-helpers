@@ -309,15 +309,16 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                     if leftIMM:
                         IMM = leftIMM
                         regSRC = rightRegister
-                    if op == "-":
-                        # Special case: sub becomes addi
-                        op = "+"
-                        IMM = -IMM
                     if IMM < 65536 and IMM >= -65536:
                         line_list = ["{}{}, {}, {}\n".format(immediate_map[op], target_reg, regSRC, IMM)]
                         return right_lines + left_lines + line_list, target_reg, None
             elif op in immediate_right:
                 if rightIMM:
+                    IMM = rightIMM
+                    if op == "-":
+                        # Special case: sub becomes addi
+                        op = "+"
+                        IMM = -IMM
                     line_list[-1] = "{}{}, {}, {}\n".format(immediate_map[op], target_reg, leftRegister, IMM)
                     return right_lines + left_lines + line_list, target_reg, None
             line_list.append("{}{}, {}, {}\n".format(inst_map[op], target_reg, leftRegister, rightRegister))
@@ -541,7 +542,7 @@ def buildStackFrames(file_lines, filename, debug):
                 line = file_lines[i]
 
             if function_head == -1:
-                print("{}:{}: Syntax error: Did not find function start for @FUNCTION declaration at {}".format(filename, fline, fline_func_start))
+                print("{}:{}: Syntax error: Did not find function start for @FUNCTION declaration at {}, expected [{}]".format(filename, fline, fline_func_start, function_name))
                 return
 
 
@@ -555,8 +556,14 @@ def buildStackFrames(file_lines, filename, debug):
                 stkptr = "k0"
                 k0_warning = 1
             func_fline = fline_func_start
-            free_tmp_registers = ["at"] + ["t"+str(i) for i in range(9, -1, -1)]
-            free_tmp_registers += ["v1", "v0", "a3", "a2", "a1", "a0"]
+            free_tmp_registers = ["$at"] + ["$t"+str(i) for i in range(9, -1, -1)]
+            free_tmp_registers += ["$v1", "$v0", "$a3", "$a2", "$a1", "$a0"]
+
+            for alias_pair in aliases:
+                regname = "$" + alias_pair[1]
+                if regname in free_tmp_registers:
+                    free_tmp_registers.remove(regname)
+
             used_tmp_registers = set()
             for j in range(func_start + 1, i):
                 func_fline += 1
@@ -652,6 +659,10 @@ def buildStackFrames(file_lines, filename, debug):
                     reg = free_tmp_registers[tmp_reg_i]
                     if re.search("(\${}(?=[\s#,)]|$))".format(reg), line.split("#")[0]):
                         free_tmp_registers.pop(tmp_reg_i)
+                for used_tmp_reg in used_tmp_registers:
+                    if re.search("(\${}(?=[\s#,)]|$))".format(used_tmp_reg), line.split("#")[0]):
+                        print("{}:{}: WARNING: tmp register {} (used by Arithmetic Assign) appears later in file, use .alias to ensure registers aren't touched.".format(filename, func_fline, used_tmp_reg))
+                        
 
                 assign_statement = re.match("((?:[^#]*:)?\s*)assign\s+", line)
                 if assign_statement:
@@ -665,19 +676,23 @@ def buildStackFrames(file_lines, filename, debug):
                     expr_body = assign_inst[2]
                     assign_lines, assign_used_registers = parse_expr(target_reg, expr_body)
                     if len(assign_used_registers) > len(free_tmp_registers):
-                        print("{}:{}: UnsupportedComplexity error: assign (Arithmetic assign) pseudoinstruction uses more temporaries than are available! Try using less!".format(filename, func_fline))
+                        print("{}:{}: UnsupportedComplexity error: assign (Arithmetic assign) pseudoinstruction uses more temporaries than are available! Try freeing some by using .stacksave or .aliaslocal".format(filename, func_fline))
                         return
-                    code_lines += ["{}.set noat\n".format(prefix)]
+                    code_lines += ["{}.set noat   # {}\n".format(prefix, interpret)]
                     regmapping = []
                     free_reg_index = 0
                     for regToMap in assign_used_registers:
+                        used_tmp_registers.add(free_tmp_registers[len(regmapping)])
                         regmapping.append((regToMap, free_tmp_registers[len(regmapping)]))
                     for assign_line in assign_lines:
                         assign_line = spacing + assign_line
-                        for mapping in aliases:
-                            assign_line = re.sub("\${}(?=[\s#,)]|$)".format(mapping[0]), mapping[1], assign_line)
+                        for mapping in regmapping:
+                            assign_line = re.sub("\${}(?=[\s#,)]|$)".format(mapping[0][1:]), mapping[1], assign_line)
                         code_lines.append(assign_line)
                     code_lines += ["{}.set at\n".format(prefix)]
+
+                    if debug:
+                        print("{}:{}: [DEBUG] assign statement uses {} tmp registers: {}".format(filename, func_fline, len(regmapping), ', '.join([x[1] for x in regmapping])))
                 else:
                     code_lines.append(line)
                 
@@ -686,6 +701,17 @@ def buildStackFrames(file_lines, filename, debug):
 
             if (re.match("(?:[^#]*:)?\s*jr\s+", code_lines[-1])):
                 print(fline, ": Warning: code tagged with @FUNCTION tag ends with a jump register instruction")
+
+            if interrupt_handler and len(used_tmp_registers) > 0:
+                if debug:
+                    print("{}:{}: [DEBUG] Detected assign statements in interrupt handler, saving tmp registers to interrupt space".format(filename, fline))
+                for used_tmp_reg in used_tmp_registers:
+                    if used_tmp_reg in stack:
+                        continue
+                    stack_varnames.append(used_tmp_reg)
+                    stack[used_tmp_reg] = stackSize
+                    stackSize += 4
+                    stack_inserts.append(used_tmp_reg)
 
             head_idx = function_head - func_start
             if len(aliases) > 0:
@@ -742,7 +768,7 @@ def buildStackFrames(file_lines, filename, debug):
                     if ih_space == -1:
                         ih_space = stackSize
                     elif ih_space < stackSize:
-                        print("{}:{}: Warning: Manually allocated instruction handler space is not large enough to fit all allocated local variables".format(filename, fline))
+                        print("{}:{}: SEVERE-Warning: Manually allocated instruction handler space is not large enough to fit all allocated local variables. This is probably an error".format(filename, fline))
                     code_lines.insert(0, "{}:  .space {}\n".format(ih_address_name, ih_space))
                     code_lines.insert(0, ".kdata\n")
 
