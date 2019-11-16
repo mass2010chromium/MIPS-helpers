@@ -330,6 +330,25 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
             elif op in pseudoinst_group1:
                 if leftIMM and rightIMM:
                     return [], None, eval("{}{}{}\n".format(leftIMM, pseudoinst_group1[op], rightIMM))
+                
+                IMM = 0
+                if rightIMM and op in ["*", "/", "%"]:
+                    IMM = rightIMM
+                    regSRC = leftRegister
+                elif leftIMM and op in ["*"]:
+                    IMM = leftIMM
+                    regSRC = rightRegister
+                if IMM < 65536 and IMM > 0 and (IMM & (IMM-1) == 0): # Bit manipulations! Checking if IMM is a power of two.
+                    if op == "%":
+                        # Modulo a power of two is like chopping bits.
+                        line_list = ["andi    {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
+                    IMM = IMM.bit_length()
+                    if op == "*":
+                        line_list = ["sll     {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
+                    elif op == "/":
+                        line_list = ["sra     {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
+                    return right_lines + left_lines + line_list, target_reg, None
+
                 inst = pseudoinst_group1_map[op]
                 line_list.append("{}{}, {}\n".format(inst[0], leftRegister, rightRegister))
                 line_list.append("{}{}\n".format(inst[1], target_reg))
@@ -520,7 +539,7 @@ def buildStackFrames(file_lines, filename, debug):
                         return
                     alias_vars = re.findall('[^\s]+', line)[1:]
                     for x in alias_vars:
-                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z_][^\s#]*)", x.strip())
+                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z_][^\s,#]*)", x.strip())
                         if split_var:
                             reg = split_var[1][1:-1]
                             name = split_var[2]
@@ -648,10 +667,10 @@ def buildStackFrames(file_lines, filename, debug):
                     k0_warning |= 4
 
                 for alias in local_alias:
-                    line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line)
+                    line = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line)
                 for alias in aliases:
-                    line = re.sub("\${}(?=[\s#,)]|$)".format(alias[0]), alias[1], line)
-
+                    line = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line)
+                
                 if re.search("(\$k0(?=[\s#,)]|$))", line.split("#")[0]):
                     k0_warning |= 2
                 
@@ -678,7 +697,10 @@ def buildStackFrames(file_lines, filename, debug):
                     if len(assign_used_registers) > len(free_tmp_registers):
                         print("{}:{}: UnsupportedComplexity error: assign (Arithmetic assign) pseudoinstruction uses more temporaries than are available! Try freeing some by using .stacksave or .aliaslocal".format(filename, func_fline))
                         return
-                    code_lines += ["{}.set noat   # {}\n".format(prefix, interpret)]
+                    if len(assign_used_registers) > 0 and len(assign_lines) > 1:
+                        code_lines += ["{}.set noat   # {}\n".format(prefix, interpret)]
+                    else:
+                        code_lines += ["{}# {}\n".format(prefix, interpret)]
                     regmapping = []
                     free_reg_index = 0
                     for regToMap in assign_used_registers:
@@ -689,7 +711,8 @@ def buildStackFrames(file_lines, filename, debug):
                         for mapping in regmapping:
                             assign_line = re.sub("\${}(?=[\s#,)]|$)".format(mapping[0][1:]), mapping[1], assign_line)
                         code_lines.append(assign_line)
-                    code_lines += ["{}.set at\n".format(prefix)]
+                    if len(assign_used_registers) > 0 and len(assign_lines) > 1:
+                        code_lines += ["{}.set at\n".format(prefix)]
 
                     if debug:
                         print("{}:{}: [DEBUG] assign statement uses {} tmp registers: {}".format(filename, func_fline, len(regmapping), ', '.join([x[1] for x in regmapping])))
