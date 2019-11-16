@@ -27,7 +27,7 @@ class Tokenizer:
     def get_next_token(self):
         self.text = self.text.strip()
         text = self.text
-        operator_match = re.match("[()+*/%&|^~-]|~\||<<|>>>|>>", text)
+        operator_match = re.match("\*::|\*:|\*;;|\*;|[()+*/%&|^~-]|~\||<<|>>>|>>", text)
         if operator_match:
             self.next_type = "operator"
             self.text = self.text[len(operator_match[0]):]
@@ -95,6 +95,11 @@ expr_5:
 expr_3:
     ~expr_3
     -expr_3
+    * expr_3    ((dereference word))
+    *; expr_3   ((dereference halfword, signed))
+    *;; expr_3  ((dereference byte, signed))
+    *: expr_3   ((dereference halfword, unsigned))
+    *:: expr_3  ((dereference byte, unsigned))
     expr_base
 
 expr_base:
@@ -193,7 +198,7 @@ def expr_5(tokenizer):
 def expr_3(tokenizer):
     # print("expr3 " + tokenizer.text)
     next_token = tokenizer.next
-    if next_token in ["~", "-"]:
+    if next_token in ["~", "-", "*", "*:", "*::", "*;", "*;;"]:
         tokenizer.advance()
         node = expr_3(tokenizer)
         ret = Node("unary" + next_token, right=node)
@@ -232,8 +237,14 @@ immediate_map = {"+"  : "addi    ",
                  "<<" : "sll     ",
                  ">>" : "sra     ",
                  ">>>": "srl     "}
+unary_imm = {"unary-", "unary~"}
 unary_map = {"unary-" : "sub     {}, $0, {}",
-             "unary~" : "nor     {}, $0, {}"}
+             "unary~" : "nor     {}, $0, {}",
+             "unary*" : "lw      {}, 0({})",
+            "unary*:" : "lh      {}, 0({})",
+           "unary*::" : "lb      {}, 0({})",
+            "unary*;" : "lhu     {}, 0({})",
+           "unary*;;" : "lbu     {}, 0({})"}
 inst_map = {     "+"  : "add     ",
                  "-"  : "sub     ",
                  "&"  : "and     ",
@@ -251,11 +262,11 @@ pseudoinst_group1_map = {
 def get_next_unused_register(used_registers):
     return "$et{}".format(len(used_registers))
 
+def help_add(regval, used_set):
+    if "et" in regval:
+        used_set.add(regval)
+
 def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
-    # print()
-    # print("Root: ", hex(id(tree)))
-    # print(tree.val)
-    # print(used_registers)
     line_list = []
     if tree.is_leaf():
         if tree.val[1] == "register":
@@ -275,6 +286,7 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
         right_lines, rightRegister, rightIMM = traverse_getlines(RIGHT_REG, tree.right, used_set, used_registers)
         # print("Gone Right: ", hex(id(tree)))
         left_lines = []
+        leftRegister = ""
         if tree.left:
             if (rightRegister != RIGHT_REG) or (rightIMM and (op in immediate_symmetric or op in unary_map)):
                 LEFT_REG = target_reg
@@ -311,6 +323,8 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                         regSRC = rightRegister
                     if IMM < 65536 and IMM >= -65536:
                         line_list = ["{}{}, {}, {}\n".format(immediate_map[op], target_reg, regSRC, IMM)]
+                        used_set.add(target_reg)
+                        help_add(regSRC, used_set)
                         return right_lines + left_lines + line_list, target_reg, None
             elif op in immediate_right:
                 if rightIMM:
@@ -320,11 +334,13 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                         op = "+"
                         IMM = -IMM
                     line_list[-1] = "{}{}, {}, {}\n".format(immediate_map[op], target_reg, leftRegister, IMM)
+                    used_set.add(target_reg)
+                    help_add(leftRegister, used_set)
                     return right_lines + left_lines + line_list, target_reg, None
             line_list.append("{}{}, {}, {}\n".format(inst_map[op], target_reg, leftRegister, rightRegister))
         else:
             if op in unary_map:
-                if rightIMM:
+                if op in unary_imm and rightIMM:
                     return [], None, eval("{}{}\n".format(op[-1], rightIMM))
                 line_list = [unary_map[op].format(target_reg, rightRegister) + "\n"]
             elif op in pseudoinst_group1:
@@ -347,6 +363,8 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                         line_list = ["sll     {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
                     elif op == "/":
                         line_list = ["sra     {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
+                    used_set.add(target_reg)
+                    help_add(regSRC, used_set)
                     return right_lines + left_lines + line_list, target_reg, None
 
                 inst = pseudoinst_group1_map[op]
@@ -354,6 +372,8 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                 line_list.append("{}{}\n".format(inst[1], target_reg))
             
         used_set.add(target_reg)
+        help_add(leftRegister, used_set)
+        help_add(rightRegister, used_set)
         return right_lines + left_lines + line_list, target_reg, None
 
 def parse_expr(target_reg, text):
@@ -666,20 +686,23 @@ def buildStackFrames(file_lines, filename, debug):
                             return
                     k0_warning |= 4
 
+                line_parts = line.split("#", 1)
                 for alias in local_alias:
-                    line = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line)
+                    line_parts[0] = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line_parts[0])
                 for alias in aliases:
-                    line = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line)
+                    line_parts[0] = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line_parts[0])
                 
-                if re.search("(\$k0(?=[\s#,)]|$))", line.split("#")[0]):
+                line = "#".join(line_parts)
+
+                if re.search("(\$k0(?=[\s#,)]|$))", line_parts[0]):
                     k0_warning |= 2
                 
                 for tmp_reg_i in range(len(free_tmp_registers) -1, -1, -1):
                     reg = free_tmp_registers[tmp_reg_i]
-                    if re.search("(\${}(?=[\s#,)]|$))".format(reg), line.split("#")[0]):
+                    if re.search("(\${}(?=[\s#,)]|$))".format(reg), line_parts[0]):
                         free_tmp_registers.pop(tmp_reg_i)
                 for used_tmp_reg in used_tmp_registers:
-                    if re.search("(\${}(?=[\s#,)]|$))".format(used_tmp_reg), line.split("#")[0]):
+                    if re.search("(\${}(?=[\s#,)]|$))".format(used_tmp_reg), line_parts[0]):
                         print("{}:{}: WARNING: tmp register {} (used by Arithmetic Assign) appears later in file, use .alias to ensure registers aren't touched.".format(filename, func_fline, used_tmp_reg))
                         
 
