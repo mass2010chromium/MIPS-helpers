@@ -2,8 +2,10 @@ import re
 import sys
 
 class Node:
-    def __init__(self, value, left=None, right=None):
+    def __init__(self, value, level, left=None, right=None, extras=None):
         self.val = value
+        self.level = level
+        self.extras = extras
         self.left = left
         self.right = right
         if left:
@@ -27,7 +29,7 @@ class Tokenizer:
     def get_next_token(self):
         self.text = self.text.strip()
         text = self.text
-        operator_match = re.match("\*::|\*:|\*;;|\*;|[()+*/%&|^~-]|~\||<<|>>>|>>", text)
+        operator_match = re.match(">::|>:|>|\*::|\*:|\*;;|\*;|[()+*/%&|^~-]|~\||<<|>>>|>>", text)
         if operator_match:
             self.next_type = "operator"
             self.text = self.text[len(operator_match[0]):]
@@ -59,6 +61,16 @@ class Tokenizer:
         return None
 
 """
+
+expr_store:
+    > number ( expr )           ((store word))
+    > expr
+    >: number ( expr )          ((store halfword))
+    >: expr
+    >:: number ( expr )         ((store byte))
+    >:: expr
+    expr
+
 expr:
     expr_13
 
@@ -100,6 +112,7 @@ expr_3:
     *;; expr_3  ((dereference byte, signed))
     *: expr_3   ((dereference halfword, unsigned))
     *:: expr_3  ((dereference byte, unsigned))
+
     expr_base
 
 expr_base:
@@ -108,10 +121,42 @@ expr_base:
     ( expr )
 """
 
+def expr_store(tokenizer):
+    op_token = tokenizer.next
+    if op_token in [">", ">:", ">::"]:
+        tokenizer.advance()
+        if tokenizer.next_type == "number":
+            number = tokenizer.next
+            tokenizer.advance()
+            next_token = tokenizer.next
+            if next_token != "(":
+                print("FAIL1")
+                return None
+            tokenizer.advance()
+            node = expr(tokenizer)
+            next_token = tokenizer.next
+            tokenizer.advance()
+            if next_token != ")":
+                print("FAIL2")
+                return None
+            return Node("unary" + op_token, "expr_store", right=node, extras=number)
+        else:
+            node = expr(tokenizer)
+            return Node("unary" + op_token, "expr_store", right=node, extras=0)
+    return expr(tokenizer)
+
 def expr(tokenizer):
     # print("expr " + tokenizer.text)
     node = expr_13(tokenizer)
     return node
+
+def tree_rotate(node):
+    while node.left.level == node.left.right.level:
+        tmp = node.left
+        node.left = node.left.right
+        tmp.right = node.left.left
+        node.left.left = tmp
+        node = tmp
 
 def expr_13(tokenizer):
     # print("expr13 " + tokenizer.text)
@@ -121,8 +166,13 @@ def expr_13(tokenizer):
         tokenizer.advance()
         node2 = expr_13(tokenizer)
         if node2:
-            ret = Node(next_token, left=node1, right=node2)
-            return ret
+            if node2.level == "expr_13":
+                retval = node2
+                # HACK tree rotations are bad.
+                node2.left = Node(next_token, "expr_13", left=node1, right=node2.left)
+                tree_rotate(node2)
+                return retval
+            return Node(next_token, "expr_13", left=node1, right=node2)
         else:
             return None
     return node1
@@ -130,12 +180,18 @@ def expr_13(tokenizer):
 def expr_12(tokenizer):
     # print("expr12 " + tokenizer.text)
     node1 = expr_11(tokenizer)
-    if tokenizer.next == "^":
+    next_token = tokenizer.next
+    if next_token == "^":
         tokenizer.advance()
         node2 = expr_12(tokenizer)
         if node2:
-            ret = Node("^", left=node1, right=node2)
-            return ret
+            if node2.level == "expr_12":
+                retval = node2
+                # HACK tree rotations are bad.
+                node2.left = Node(next_token, "expr_12", left=node1, right=node2.left)
+                tree_rotate(node2)
+                return retval
+            return Node(next_token, "expr_12", left=node1, right=node2)
         else:
             return None
     return node1
@@ -143,12 +199,18 @@ def expr_12(tokenizer):
 def expr_11(tokenizer):
     # print("expr11 " + tokenizer.text)
     node1 = expr_7(tokenizer)
-    if tokenizer.next == "&":
+    next_token = tokenizer.next
+    if next_token == "&":
         tokenizer.advance()
         node2 = expr_11(tokenizer)
         if node2:
-            ret = Node("&", left=node1, right=node2)
-            return ret
+            if node2.level == "expr_11":
+                retval = node2
+                # HACK tree rotations are bad.
+                node2.left = Node(next_token, "expr_11", left=node1, right=node2.left)
+                tree_rotate(node2)
+                return retval
+            return Node(next_token, "expr_11", left=node1, right=node2)
         else:
             return None
     return node1
@@ -161,8 +223,13 @@ def expr_7(tokenizer):
         tokenizer.advance()
         node2 = expr_7(tokenizer)
         if node2:
-            ret = Node(next_token, left=node1, right=node2)
-            return ret
+            if node2.level == "expr_7":
+                retval = node2
+                # HACK tree rotations are bad.
+                node2.left = Node(next_token, "expr_7", left=node1, right=node2.left)
+                tree_rotate(node2)
+                return retval
+            return Node(next_token, "expr_7", left=node1, right=node2)
         else:
             return None
     return node1
@@ -175,8 +242,13 @@ def expr_6(tokenizer):
         tokenizer.advance()
         node2 = expr_6(tokenizer)
         if node2:
-            ret = Node(next_token, left=node1, right=node2)
-            return ret
+            if node2.level == "expr_6":
+                retval = node2
+                # HACK tree rotations are bad.
+                node2.left = Node(next_token, "expr_6", left=node1, right=node2.left)
+                tree_rotate(node2)
+                return retval
+            return Node(next_token, "expr_6", left=node1, right=node2)
         else:
             return None
     return node1
@@ -189,19 +261,24 @@ def expr_5(tokenizer):
         tokenizer.advance()
         node2 = expr_5(tokenizer)
         if node2:
-            ret = Node(next_token, left=node1, right=node2)
-            return ret
+            if node2.level == "expr_5":
+                retval = node2
+                # HACK tree rotations are bad.
+                node2.left = Node(next_token, "expr_5", left=node1, right=node2.left)
+                tree_rotate(node2)
+                return retval
+            return Node(next_token, "expr_5", left=node1, right=node2)
         else:
             return None
     return node1
 
 def expr_3(tokenizer):
     # print("expr3 " + tokenizer.text)
-    next_token = tokenizer.next
-    if next_token in ["~", "-", "*", "*:", "*::", "*;", "*;;"]:
+    op_token = tokenizer.next
+    if op_token in ["~", "-", "*", "*:", "*::", "*;", "*;;"]:
         tokenizer.advance()
         node = expr_3(tokenizer)
-        ret = Node("unary" + next_token, right=node)
+        ret = Node("unary" + op_token, "expr_3", right=node)
         return ret
     return expr_base(tokenizer)
 
@@ -212,13 +289,14 @@ def expr_base(tokenizer):
     tokenizer.advance()
     if next_token == "(":
         node = expr(tokenizer)
+        node.level = "expr_base" # TODO maybe change?
         next_token = tokenizer.next
         tokenizer.advance()
         if next_token != ")":
             return None
         return node
     elif next_type == "register" or next_type == "number":
-        return Node((next_token, next_type))
+        return Node((next_token, next_type), "expr_base")
     else:
         return None
 
@@ -238,13 +316,17 @@ immediate_map = {"+"  : "addi    ",
                  ">>" : "sra     ",
                  ">>>": "srl     "}
 unary_imm = {"unary-", "unary~"}
+unary_store = {"unary>", "unary>:", "unary>::"}
 unary_map = {"unary-" : "sub     {}, $0, {}",
              "unary~" : "nor     {}, $0, {}",
              "unary*" : "lw      {}, 0({})",
             "unary*:" : "lh      {}, 0({})",
            "unary*::" : "lb      {}, 0({})",
             "unary*;" : "lhu     {}, 0({})",
-           "unary*;;" : "lbu     {}, 0({})"}
+           "unary*;;" : "lbu     {}, 0({})",
+             "unary>" : "sw      {}, {}({})",
+            "unary>:" : "sh      {}, {}({})",
+           "unary>::" : "sb      {}, {}({})"}
 inst_map = {     "+"  : "add     ",
                  "-"  : "sub     ",
                  "&"  : "and     ",
@@ -342,7 +424,10 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
             if op in unary_map:
                 if op in unary_imm and rightIMM:
                     return [], None, eval("{}{}\n".format(op[-1], rightIMM))
-                line_list = [unary_map[op].format(target_reg, rightRegister) + "\n"]
+                if op in unary_store:
+                    line_list = [unary_map[op].format(target_reg, tree.extras, rightRegister) + "\n"]
+                else:
+                    line_list = [unary_map[op].format(target_reg, rightRegister) + "\n"]
             elif op in pseudoinst_group1:
                 if leftIMM and rightIMM:
                     return [], None, eval("{}{}{}\n".format(leftIMM, pseudoinst_group1[op], rightIMM))
@@ -376,19 +461,20 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
         help_add(rightRegister, used_set)
         return right_lines + left_lines + line_list, target_reg, None
 
-def parse_expr(target_reg, text):
-    root = expr(Tokenizer(text))
-    needs_extra = re.search("\{}(?=[\s#)+*/%&|^~-]|$)".format(target_reg), text)
+def parse_expr(target_reg, text, needs_extra=False):
+    root = expr_store(Tokenizer(text))
+    if not needs_extra:
+        needs_extra = re.search("\{}(?=[\s#)+*/%&|^~-]|$)".format(target_reg), text)
+        # HACKY THING!!!
+        if text.startswith(">"):
+            needs_extra = True
     result_loc = target_reg
     used_registers = []
     used_set = set()
     if needs_extra:
-        needs_extra = True
         result_loc = "$et0"
         used_registers.append(result_loc)
         used_set.add(result_loc)
-    else:
-        needs_extra = False
     
     # Now that we've built the tree, we're going to postorder through it and generate the instructions.
     lines, result_loc2, IMM = traverse_getlines(result_loc, root, used_set, used_registers)
@@ -639,7 +725,6 @@ def buildStackFrames(file_lines, filename, debug):
                             if debug:
                                 print("{}:{}: [DEBUG] Found load stack address instruction, loading stack address {}".format(filename, func_fline, var))
                             line = "{}addi    {}, ${}, {} # {}\n".format(prefix, la_inst[1], stkptr, stack[var], line.strip())
-
 
                 lstk = re.match("((?:[^#]*:)?\s*)lstk\s+", line)
                 if lstk:
