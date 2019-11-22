@@ -36,7 +36,7 @@ class Tokenizer:
             self.next_type = "operator"
             self.text = self.text[len(operator_match[0]):]
             return operator_match[0]
-        register_match = re.match("\$[^\s#()+*/%&|^~\[\]-]+", text)
+        register_match = re.match("\$[a-zA-Z_][a-zA-Z_0-9]*", text)
         if register_match:
             self.next_type = "register"
             self.text = self.text[len(register_match[0]):]
@@ -61,6 +61,9 @@ class Tokenizer:
             return "#"
         self.next_type = "EOL"
         return None
+    
+    def empty(self):
+        return self.next == None
 
 """
 
@@ -564,7 +567,13 @@ def printTree(root):
         print("None")
 
 def parse_expr(target_reg, text, array_bindings, needs_extra=False):
-    root = expr_store(Tokenizer(text, array_bindings))
+    tokenizer = Tokenizer(text, array_bindings)
+    try:
+        root = expr_store(tokenizer)
+        if not tokenizer.empty():
+            return None, set()
+    except:
+        return None, set()
     # printTree(root)
     if not needs_extra:
         needs_extra = re.search("\{}(?=[\s#)+*/%&|^~-]|$)".format(target_reg), text)
@@ -581,6 +590,7 @@ def parse_expr(target_reg, text, array_bindings, needs_extra=False):
     
     # Now that we've built the tree, we're going to postorder through it and generate the instructions.
     lines, result_loc2, IMM = traverse_getlines(result_loc, root, used_set, used_registers)
+    # [print(l.text, end="") for l in lines]
     if IMM:
         lines = [load_imm(target_reg, IMM)]
     elif len(lines) == 0:
@@ -665,7 +675,7 @@ def parse_expr(target_reg, text, array_bindings, needs_extra=False):
                         i += 1
                 # The addi gets thrown in at index i.
                 if i == 0:
-                    new_lines.append(inst_full_initial)
+                    new_lines.append(MIPSInstruction("addi    {}, {}, {}\n".format(regdest, regsrc, addi_value), src=[regsrc], dest=regdest, IMM=addi_value))
                 else:
                     lines.insert(i, MIPSInstruction("addi    {}, {}, {}\n".format(regdest, regsrc, addi_value), src=[regsrc], dest=regdest, IMM=addi_value))
 
@@ -694,9 +704,11 @@ def parse_expr_update_used(target_reg, expr_body, used_tmp_registers, free_tmp_r
     return_lines = []
     spacing = " "*len(prefix)
     assign_lines, assign_used_registers = parse_expr(target_reg, expr_body, array_bindings)
+    if assign_lines == None:
+        return None
     if len(assign_used_registers) > len(free_tmp_registers):
         print("{}:{}: UnsupportedComplexity error: assign (Arithmetic assign) pseudoinstruction uses more temporaries than are available! Try freeing some by using .stacksave or .aliaslocal".format(filename, func_fline))
-        return
+        return ["UnsupportedComplexityError"]
     regmapping = []
     for regToMap in assign_used_registers:
         used_tmp_registers.add(free_tmp_registers[len(regmapping)])
@@ -726,14 +738,34 @@ class Function:
 Pass me a list of lines in a file!
 For now not compatible with inliner.py.
 '''
-def buildStackFrames(file_lines, filename, debug):
+def buildStackFrames(file_lines, filename, const_defines, debug):
     functions = {} # Key: function name, value: the function. TODO: Possible inlining?
     i = 0
     fline = 1
     while (i < len(file_lines)):
         line = file_lines[i]
+
+        # GLOBAL REPLACE BLOCK -- SIMPLIFY THIS IF YOU GET THE CHANCE
+        line_parts = line.split("#", 1)
+        line_first = line_parts[0]
+        for global_define in const_defines:
+            line_first = re.sub("(?<![a-zA-Z_]){}(?![a-zA-Z_0-9])".format(global_define), const_defines[global_define], line_first)
+        line_parts[0] = line_first
+        line = "#".join(line_parts)
+        file_lines[i] = line
+        # END GLOBAL REPLACE BLOCK -- SIMPLIFY THIS IF YOU GET THE CHANCE
+
         line = line.strip()
-        if line.startswith(("#include", "#INCLUDE")):
+        global_define_match = re.match("\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^#]*)", line)
+        if global_define_match:
+            name = global_define_match[1]
+            val = global_define_match[2]
+            #TODO allow file-local defines
+            if name in const_defines:
+                print("{}:{}: Syntax error: Duplicate global define {}, file-local defines not supported yet".format(filename, fline, name))
+                return
+            const_defines[name] = val
+        elif line.startswith(("#include", "#INCLUDE")):
             include_match = re.match("#(include|INCLUDE)\s+([^\s#]+)", line)
             if include_match:
                 included_file_name = include_match[2]
@@ -747,7 +779,7 @@ def buildStackFrames(file_lines, filename, debug):
                             fileLines.append(line)
                             line = inputFile.readline()
                     if included_file_name.endswith(".fs"):
-                        fileLines = buildStackFrames(fileLines, included_file_name, debug)
+                        fileLines = buildStackFrames(fileLines, included_file_name, const_defines, debug)
                     if fileLines:
                         file_lines[i:i+1] = fileLines
                         i += len(fileLines) - 1
@@ -815,10 +847,19 @@ def buildStackFrames(file_lines, filename, debug):
             i += 1
             fline += 1
             line = file_lines[i]
+            # GLOBAL REPLACE BLOCK -- SIMPLIFY THIS IF YOU GET THE CHANCE
+            line_parts = line.split("#", 1)
+            line_first = line_parts[0]
+            for global_define in const_defines:
+                line_first = re.sub("(?<![a-zA-Z_]){}(?![a-zA-Z_0-9])".format(global_define), const_defines[global_define], line_first)
+            line_parts[0] = line_first
+            line = "#".join(line_parts)
+            file_lines[i] = line
+            # END GLOBAL REPLACE BLOCK -- SIMPLIFY THIS IF YOU GET THE CHANCE
+
             function_head = -1
             while (not line.strip().startswith(("!FUNCTION", "!function"))):
                 interpret = line.strip()
-
                 if interpret.startswith(("#include", "#INCLUDE")):
                     print("{}:{}: Syntax error: #include symbol found inside a function block".format(filename, fline))
                     return
@@ -918,6 +959,16 @@ def buildStackFrames(file_lines, filename, debug):
                     print("{}:{}: Syntax error: Expected closing !FUNCTION tag for @FUNCTION declaration at {}".format(filename, fline, fline_func_start))
                     return
                 line = file_lines[i]
+                # GLOBAL REPLACE BLOCK -- SIMPLIFY THIS IF YOU GET THE CHANCE
+                line_parts = line.split("#", 1)
+                line_first = line_parts[0]
+                for global_define in const_defines:
+                    line_first = re.sub("(?<![a-zA-Z_]){}(?![a-zA-Z_0-9])".format(global_define), const_defines[global_define], line_first)
+                line_parts[0] = line_first
+                line = "#".join(line_parts)
+                file_lines[i] = line
+                # END GLOBAL REPLACE BLOCK -- SIMPLIFY THIS IF YOU GET THE CHANCE
+
 
             if function_head == -1:
                 print("{}:{}: Syntax error: Did not find function start for @FUNCTION declaration at {}, expected [{}]".format(filename, fline, fline_func_start, function_name))
@@ -943,6 +994,7 @@ def buildStackFrames(file_lines, filename, debug):
                     free_tmp_registers.remove(regname)
 
             used_tmp_registers = set()
+
             for j in range(func_start + 1, i):
                 func_fline += 1
                 line = file_lines[j]
@@ -1058,7 +1110,11 @@ def buildStackFrames(file_lines, filename, debug):
                         return
                     target_reg = assign_inst[1]
                     expr_body = assign_inst[2]
-                    code_lines += parse_expr_update_used(target_reg, expr_body, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+                    lines_to_add = parse_expr_update_used(target_reg, expr_body, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+                    if not lines_to_add:
+                        print("{}:{}: Syntax error: Parse error in assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
+                        return
+                    code_lines += lines_to_add
                     append_original = False
 
                 return_statement = re.match("((?:[^#]*:)?\s*)@return\s+", line, re.IGNORECASE)
@@ -1071,7 +1127,11 @@ def buildStackFrames(file_lines, filename, debug):
                             if debug:
                                 print("{}:{}: [DEBUG] return-assign statement found: {}".format(filename, func_fline, return_expr))
                             target_reg = '$v0'
-                            code_lines += parse_expr_update_used(target_reg, return_expr, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+                            if not lines_to_add:
+                                print("{}:{}: Syntax error: Parse error in return-assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
+                                return
+                            lines_to_add = parse_expr_update_used(target_reg, return_expr, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+                            code_lines += lines_to_add
 
                 if append_original:
                     code_lines.append(line)
@@ -1212,7 +1272,7 @@ if __name__ == "__main__":
         if inputFName == -1:
             inputFName = arg
             continue
-        print("ignoring extra argument " + arg);
+        print("ignoring extra argument " + arg)
 
     if inputFName == -1:
         inputFName = input("Input file: ")
@@ -1225,7 +1285,7 @@ if __name__ == "__main__":
             fileLines.append(line)
             line = inputFile.readline()
 
-    outputFileLines = buildStackFrames(fileLines, inputFName, debug)
+    outputFileLines = buildStackFrames(fileLines, inputFName, dict(), debug)
     if outputFileLines:
         if outputFName == -1:
             if inputFName.endswith(".fs"):
