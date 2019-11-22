@@ -1,5 +1,6 @@
 import re
 import sys
+import os
 
 class Node:
     def __init__(self, value, level, left=None, right=None, extras=None):
@@ -18,10 +19,11 @@ class Node:
         return self.left == None and self.right == None
 
 class Tokenizer:
-    def __init__(self, text):
+    def __init__(self, text, bindings):
         self.text = text
         self.next_type = None
         self.next = self.get_next_token()
+        self.array_bindings = bindings
 
     def advance(self):
         self.next = self.get_next_token()
@@ -29,12 +31,12 @@ class Tokenizer:
     def get_next_token(self):
         self.text = self.text.strip()
         text = self.text
-        operator_match = re.match(">::|>:|>|\*::|\*:|\*;;|\*;|[()+*/%&|^~-]|~\||<<|>>>|>>", text)
+        operator_match = re.match(">::|>:|>|\*::|\*:|\*;;|\*;|&\[|[\[\]()+*/%&|^~-]|~\||<<|>>>|>>", text)
         if operator_match:
             self.next_type = "operator"
             self.text = self.text[len(operator_match[0]):]
             return operator_match[0]
-        register_match = re.match("\$[^\s#()+*/%&|^~-]+", text)
+        register_match = re.match("\$[^\s#()+*/%&|^~\[\]-]+", text)
         if register_match:
             self.next_type = "register"
             self.text = self.text[len(register_match[0]):]
@@ -112,7 +114,11 @@ expr_3:
     *;; expr_3  ((dereference byte, signed))
     *: expr_3   ((dereference halfword, unsigned))
     *:: expr_3  ((dereference byte, unsigned))
+    expr_2
 
+expr_2:
+    register [ expr ]
+    register &[ expr ]
     expr_base
 
 expr_base:
@@ -130,14 +136,12 @@ def expr_store(tokenizer):
             tokenizer.advance()
             next_token = tokenizer.next
             if next_token != "(":
-                print("FAIL1")
                 return None
             tokenizer.advance()
             node = expr(tokenizer)
             next_token = tokenizer.next
             tokenizer.advance()
             if next_token != ")":
-                print("FAIL2")
                 return None
             return Node("unary" + op_token, "expr_store", right=node, extras=number)
         else:
@@ -151,12 +155,18 @@ def expr(tokenizer):
     return node
 
 def tree_rotate(node):
-    while node.left.level == node.left.right.level:
+    # print("Tree rotating")
+    # print(node.val)
+    # print(node.left.val, node.right.val)
+    while node.left.right and node.left.level == node.left.right.level:
         tmp = node.left
         node.left = node.left.right
         tmp.right = node.left.left
         node.left.left = tmp
-        node = tmp
+        node = node.left
+        # print(node.val)
+        # print(node.left.val, node.right.val)
+
 
 def expr_13(tokenizer):
     # print("expr13 " + tokenizer.text)
@@ -275,11 +285,74 @@ def expr_5(tokenizer):
 def expr_3(tokenizer):
     # print("expr3 " + tokenizer.text)
     op_token = tokenizer.next
-    if op_token in ["~", "-", "*", "*:", "*::", "*;", "*;;"]:
+    if op_token in ["~", "-"]:
         tokenizer.advance()
         node = expr_3(tokenizer)
         ret = Node("unary" + op_token, "expr_3", right=node)
         return ret
+    elif op_token in ["*", "*:", "*::", "*;", "*;;"]:
+        tokenizer.advance()
+        if tokenizer.next_type == "number":
+            number = tokenizer.next
+            tokenizer.advance()
+            next_token = tokenizer.next
+            if next_token != "(":
+                return None
+            tokenizer.advance()
+            node = expr_3(tokenizer)
+            next_token = tokenizer.next
+            tokenizer.advance()
+            if next_token != ")":
+                return None
+            return Node("unary" + op_token, "expr_3", right=node, extras=number)
+        else:
+            node = expr_3(tokenizer)
+            return Node("unary" + op_token, "expr_3", right=node, extras=0)
+    return expr_2(tokenizer)
+
+def expr_2(tokenizer):
+    next_token = tokenizer.next
+    next_type = tokenizer.next_type
+    if next_type == "register": # Kinda jank, checking this thing in two places
+        base_register = next_token
+        tokenizer.advance()
+        if next_token in tokenizer.array_bindings:
+            array_size = tokenizer.array_bindings[next_token]
+            next_token = tokenizer.next
+            if next_token in ["[", "&["]:
+                array_access_start = next_token
+                tokenizer.advance()
+                array_index = expr(tokenizer)
+                next_token = tokenizer.next
+                tokenizer.advance()
+                if next_token != "]":
+                    return None
+                imm_offset = 0
+                if array_size != 1:
+                    array_size_node = Node((array_size, "number"), "expr_base")
+                    array_offset = Node("*", "expr_5", left=array_size_node, right=array_index)
+                else:
+                    array_offset = array_index
+
+                array_base = Node((base_register, "register"), "expr_base")
+                
+                # if array_index.is_leaf() and array_index.val[1] == "number" and array_index.val[0] * array_size < 65536:
+                #     imm_offset = array_index.val[0] * array_size
+                #     base_plus_offset = array_base
+                # else:
+                base_plus_offset = Node("+", "expr_6", left=array_offset, right=array_base)
+                
+                if array_access_start == "&[":
+                    # No need to load word if we're doing an address of array operator
+                    return base_plus_offset
+                if array_size == 1:
+                    load_type = "unary*::"
+                elif array_size == 2:
+                    load_type = "unary*:"
+                else:
+                    load_type = "unary*"
+                return Node(load_type, "expr_3", right=base_plus_offset, extras=imm_offset)
+        return Node((base_register, next_type), "expr_base")
     return expr_base(tokenizer)
 
 def expr_base(tokenizer):
@@ -300,8 +373,18 @@ def expr_base(tokenizer):
     else:
         return None
 
+class MIPSInstruction:
+    def __init__(self, text, src=[], dest=None, IMM=None):
+        self.text = text
+        self.regsrc = src
+        self.regdest = dest
+        self.IMM = IMM
+    
+    def get_text(self):
+        return self.text
+
 def load_imm(target_reg, imm):
-    return "li      {}, {}\n".format(target_reg, imm)
+    return MIPSInstruction("li      {}, {}\n".format(target_reg, imm), dest=target_reg, IMM=imm)
 
 immediate_symmetric = {"+", "&", "|", "~|", "^"}
 immediate_any = {"+", "-", "&", "|", "~|","^", ">>", "<<", ">>>"}
@@ -317,13 +400,14 @@ immediate_map = {"+"  : "addi    ",
                  ">>>": "srl     "}
 unary_imm = {"unary-", "unary~"}
 unary_store = {"unary>", "unary>:", "unary>::"}
+unary_load = {"unary*", "unary*:", "unary*::", "unary*;", "unary*;;"}
 unary_map = {"unary-" : "sub     {}, $0, {}",
              "unary~" : "nor     {}, $0, {}",
-             "unary*" : "lw      {}, 0({})",
-            "unary*:" : "lh      {}, 0({})",
-           "unary*::" : "lb      {}, 0({})",
-            "unary*;" : "lhu     {}, 0({})",
-           "unary*;;" : "lbu     {}, 0({})",
+             "unary*" : "lw      {}, {}({})",
+            "unary*:" : "lhu     {}, {}({})",
+           "unary*::" : "lbu     {}, {}({})",
+            "unary*;" : "lh      {}, {}({})",
+           "unary*;;" : "lb      {}, {}({})",
              "unary>" : "sw      {}, {}({})",
             "unary>:" : "sh      {}, {}({})",
            "unary>::" : "sb      {}, {}({})"}
@@ -336,9 +420,12 @@ inst_map = {     "+"  : "add     ",
                  ">>" : "srav    ",
                  ">>>": "srlv    "}
 pseudoinst_group1 = {"*":"*", "/":"//", "%":"%"}
+not_pseudoinst_map = {
+                 "*"  : "mul     ",
+                 "/"  : "div     "}
 pseudoinst_group1_map = {
-                 "*"  : ("mult    ", "mflo    "),
-                 "/"  : ("div     ", "mflo    "),
+                #  "*"  : ("mult    ", "mflo    "),
+                #  "/"  : ("div     ", "mflo    "),
                  "%"  : ("div     ", "mfhi    ")}
 
 def get_next_unused_register(used_registers):
@@ -347,6 +434,8 @@ def get_next_unused_register(used_registers):
 def help_add(regval, used_set):
     if "et" in regval:
         used_set.add(regval)
+
+IMMEDIATE_MAX = 32768
 
 def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
     line_list = []
@@ -403,8 +492,8 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                     if leftIMM:
                         IMM = leftIMM
                         regSRC = rightRegister
-                    if IMM < 65536 and IMM >= -65536:
-                        line_list = ["{}{}, {}, {}\n".format(immediate_map[op], target_reg, regSRC, IMM)]
+                    if IMM < IMMEDIATE_MAX and IMM >= -IMMEDIATE_MAX:
+                        line_list = [MIPSInstruction("{}{}, {}, {}\n".format(immediate_map[op], target_reg, regSRC, IMM), src=[regSRC], dest=target_reg, IMM=IMM)]
                         used_set.add(target_reg)
                         help_add(regSRC, used_set)
                         return right_lines + left_lines + line_list, target_reg, None
@@ -415,19 +504,20 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                         # Special case: sub becomes addi
                         op = "+"
                         IMM = -IMM
-                    line_list[-1] = "{}{}, {}, {}\n".format(immediate_map[op], target_reg, leftRegister, IMM)
+                    line_list[-1] = MIPSInstruction("{}{}, {}, {}\n".format(immediate_map[op], target_reg, leftRegister, IMM), src=[leftRegister], dest=target_reg, IMM=IMM)
                     used_set.add(target_reg)
                     help_add(leftRegister, used_set)
                     return right_lines + left_lines + line_list, target_reg, None
-            line_list.append("{}{}, {}, {}\n".format(inst_map[op], target_reg, leftRegister, rightRegister))
+            line_list.append(MIPSInstruction("{}{}, {}, {}\n".format(inst_map[op], target_reg, leftRegister, rightRegister), src=[leftRegister, rightRegister], dest=target_reg))
         else:
             if op in unary_map:
                 if op in unary_imm and rightIMM:
                     return [], None, eval("{}{}\n".format(op[-1], rightIMM))
-                if op in unary_store:
-                    line_list = [unary_map[op].format(target_reg, tree.extras, rightRegister) + "\n"]
+                if (op in unary_store) or (op in unary_load):
+                    offset = tree.extras
+                    line_list = [MIPSInstruction(unary_map[op].format(target_reg, offset, rightRegister) + "\n", src=[rightRegister], dest=target_reg, IMM=offset)]
                 else:
-                    line_list = [unary_map[op].format(target_reg, rightRegister) + "\n"]
+                    line_list = [MIPSInstruction(unary_map[op].format(target_reg, rightRegister) + "\n", src=[rightRegister], dest=target_reg)]
             elif op in pseudoinst_group1:
                 if leftIMM and rightIMM:
                     return [], None, eval("{}{}{}\n".format(leftIMM, pseudoinst_group1[op], rightIMM))
@@ -442,27 +532,40 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
                 if IMM < 65536 and IMM > 0 and (IMM & (IMM-1) == 0): # Bit manipulations! Checking if IMM is a power of two.
                     if op == "%":
                         # Modulo a power of two is like chopping bits.
-                        line_list = ["andi    {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
-                    IMM = IMM.bit_length()
+                        line_list = [MIPSInstruction("andi    {0}, {1}, {3} # rem {0}, {1}, {2}\n".format(target_reg, regSRC, IMM, IMM - 1), src=[regSRC], dest=target_reg, IMM=IMM)]
+                    IMM_new = IMM.bit_length()
                     if op == "*":
-                        line_list = ["sll     {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
+                        line_list = [MIPSInstruction("sll     {0}, {1}, {3} # mul {0}, {1}, {2}\n".format(target_reg, regSRC, IMM, IMM_new - 1), src=[regSRC], dest=target_reg, IMM=IMM)]
                     elif op == "/":
-                        line_list = ["sra     {}, {}, {}\n".format(target_reg, regSRC, IMM - 1)]
+                        line_list = [MIPSInstruction("sra     {0}, {1}, {3} # div {0}, {1}, {2}\n".format(target_reg, regSRC, IMM, IMM_new - 1), src=[regSRC], dest=target_reg, IMM=IMM)]
                     used_set.add(target_reg)
                     help_add(regSRC, used_set)
                     return right_lines + left_lines + line_list, target_reg, None
-
-                inst = pseudoinst_group1_map[op]
-                line_list.append("{}{}, {}\n".format(inst[0], leftRegister, rightRegister))
-                line_list.append("{}{}\n".format(inst[1], target_reg))
+                if op in not_pseudoinst_map:
+                    line_list.append(MIPSInstruction("{}{}, {}, {}\n".format(not_pseudoinst_map[op], target_reg, leftRegister, rightRegister), src=[leftRegister, rightRegister], dest=target_reg))
+                else: # if op in pseudoinst_group1_map
+                    inst = pseudoinst_group1_map[op]
+                    line_list.append(MIPSInstruction("{}{}, {}\n".format(inst[0], leftRegister, rightRegister), src=[leftRegister, rightRegister]))
+                    line_list.append(MIPSInstruction("{}{}\n".format(inst[1], target_reg), dest=target_reg))
             
         used_set.add(target_reg)
         help_add(leftRegister, used_set)
         help_add(rightRegister, used_set)
         return right_lines + left_lines + line_list, target_reg, None
 
-def parse_expr(target_reg, text, needs_extra=False):
-    root = expr_store(Tokenizer(text))
+def printTree(root):
+    if root:
+        print("Node {}: {}".format(hex(id(root)), root.val))
+        print("Left:")
+        printTree(root.left)
+        print("Right {}:".format(hex(id(root))))
+        printTree(root.right)
+    else:
+        print("None")
+
+def parse_expr(target_reg, text, array_bindings, needs_extra=False):
+    root = expr_store(Tokenizer(text, array_bindings))
+    # printTree(root)
     if not needs_extra:
         needs_extra = re.search("\{}(?=[\s#)+*/%&|^~-]|$)".format(target_reg), text)
         # HACKY THING!!!
@@ -480,13 +583,102 @@ def parse_expr(target_reg, text, needs_extra=False):
     lines, result_loc2, IMM = traverse_getlines(result_loc, root, used_set, used_registers)
     if IMM:
         lines = [load_imm(target_reg, IMM)]
+    elif len(lines) == 0:
+        if target_reg != result_loc2:
+            lines = [MIPSInstruction("move    {}, {}\n".format(target_reg, result_loc2), src=[result_loc2], dest=target_reg)]
     else:
+        new_lines = []
+        # addi folding
+        while lines:
+            # print(len(lines))
+            # [print(l.text, end="") for l in lines]
+            # print("="*50)
+            # [print(l.text, end="") for l in new_lines]
+            # print("+"*50)
+            # input()
+            inst_full_initial = lines.pop(0)
+            inst = inst_full_initial.text
+            if inst.startswith("addi "):
+                regdest = inst_full_initial.regdest
+                regsrc = inst_full_initial.regsrc[0]
+                addi_value = inst_full_initial.IMM
+                i = 0
+                while i < len(lines) - 1:
+                    # print(i)
+                    # print(regdest, regsrc, addi_value)
+                    # [print(l.text, end="") for l in lines]
+                    # print("-"*50)
+                    # input()
+                    inst_full = lines[i]
+                    inst = inst_full.text
+                    if inst.startswith("addi "):
+                        regdest_new = inst_full.regdest
+                        regsrc_new = inst_full.regsrc[0]
+                        addi_value_inst = inst_full.IMM
+                        if regsrc_new == regdest:
+                            addi_value_new = addi_value + addi_value_inst
+                            if addi_value_new >= IMMEDIATE_MAX or addi_value_new < -IMMEDIATE_MAX:
+                                break
+                            addi_value = addi_value_new
+                            regdest = regdest_new
+                            lines.pop(i)
+                            i -= 1
+                        i += 1
+                    else:
+                        if inst.startswith("add "):
+                            regdest_new = inst_full.regdest
+                            regsrc1 = inst_full.regsrc[0]
+                            regsrc2 = inst_full.regsrc[1]
+                            assert not (regsrc1 == regdest and regsrc2 == regdest) # Should never be adding reg to itself
+                            if regsrc1 == regdest:
+                                inst_full = MIPSInstruction("add     {}, {}, {}\n".format(regdest_new, regsrc, regsrc2), src=[regsrc, regsrc2], dest=regdest_new)
+                                regdest = regdest_new
+                                regsrc = regdest
+                            elif regsrc2 == regdest:
+                                inst_full = MIPSInstruction("add     {}, {}, {}\n".format(regdest_new, regsrc1, regsrc), src=[regsrc1, regsrc], dest=regdest_new)
+                                regdest = regdest_new
+                                regsrc = regdest
+                        
+                        elif inst.startswith("sub "):
+                            regdest_new = inst_full.regdest
+                            regsrc1 = inst_full.regsrc[0]
+                            regsrc2 = inst_full.regsrc[1]
+                            assert not (regsrc1 == regdest and regsrc2 == regdest) # Should never be subtracting reg from itself
+                            if regsrc1 == regdest:
+                                inst_full = MIPSInstruction("sub     {}, {}, {}\n".format(regdest_new, regsrc, regsrc2), src=[regsrc, regsrc2], dest=regdest_new)
+                                regdest = regdest_new
+                                regsrc = regdest
+                            elif regsrc2 == regdest:
+                                inst_full = MIPSInstruction("sub     {}, {}, {}\n".format(regdest_new, regsrc1, regsrc), src=[regsrc1, regsrc], dest=regdest_new)
+                                if addi_value == -IMMEDIATE_MAX:
+                                    break
+                                addi_value *= -1
+                                regdest = regdest_new
+                                regsrc = regdest
+                        
+                        else:
+                            regdest_new = inst_full.regdest
+                            if regdest in inst_full.regsrc: # Data dependancy that we can't resolve!
+                                break
+                            assert regdest_new != regdest
+                        lines[i] = inst_full
+                        i += 1
+                # The addi gets thrown in at index i.
+                if i == 0:
+                    new_lines.append(inst_full_initial)
+                else:
+                    lines.insert(i, MIPSInstruction("addi    {}, {}, {}\n".format(regdest, regsrc, addi_value), src=[regsrc], dest=regdest, IMM=addi_value))
+
+            else:
+                new_lines.append(inst_full_initial)
+                # RESET!
+        lines = new_lines
         if needs_extra:
-            lines[-1] = lines[-1].replace("$et0", target_reg, 1)
+            lines[-1].text = lines[-1].text.replace("$et0", target_reg, 1)
         assert result_loc == result_loc2
     if target_reg in used_set:
         used_set.remove(target_reg)
-    return lines, used_set
+    return [l.text for l in lines], used_set
 
 ### -------------------------------------------------------------------------------------------------
 ### -------------------------------------------------------------------------------------------------
@@ -497,6 +689,32 @@ def parse_expr(target_reg, text, needs_extra=False):
 ### -------------------------------------------------------------------------------------------------
 ### -------------------------------------------------------------------------------------------------
 ### -------------------------------------------------------------------------------------------------
+
+def parse_expr_update_used(target_reg, expr_body, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret):
+    return_lines = []
+    spacing = " "*len(prefix)
+    assign_lines, assign_used_registers = parse_expr(target_reg, expr_body, array_bindings)
+    if len(assign_used_registers) > len(free_tmp_registers):
+        print("{}:{}: UnsupportedComplexity error: assign (Arithmetic assign) pseudoinstruction uses more temporaries than are available! Try freeing some by using .stacksave or .aliaslocal".format(filename, func_fline))
+        return
+    regmapping = []
+    for regToMap in assign_used_registers:
+        used_tmp_registers.add(free_tmp_registers[len(regmapping)])
+        regmapping.append((regToMap, free_tmp_registers[len(regmapping)]))
+    for assign_line in assign_lines:
+        assign_line = spacing + assign_line
+        for mapping in regmapping:
+            assign_line = re.sub("\${}(?=[\s#,)]|$)".format(mapping[0][1:]), mapping[1], assign_line)
+        return_lines.append(assign_line)
+    
+    # Seems kind hacky
+    if target_reg == "$at" or (len(assign_used_registers) > 0 and len(assign_lines) > 1):
+        return_lines.insert(0, "{}.set noat   # {}\n".format(prefix, interpret))
+        return_lines += ["{}.set at\n".format(spacing)]
+    else:
+        return_lines.insert(0, "{}# {}\n".format(spacing, interpret))
+    
+    return return_lines
 
 class Function:
     def __init__(self, name, codeLines, attributes=[]):
@@ -521,21 +739,25 @@ def buildStackFrames(file_lines, filename, debug):
                 included_file_name = include_match[2]
                 if debug:
                     print("{}:{}: [DEBUG] #include {}".format(filename, fline, included_file_name))
-                fileLines = []
-                with open(included_file_name, 'r') as inputFile:
-                    line = inputFile.readline()
-                    while (line):
-                        fileLines.append(line)
+                if os.path.isfile(included_file_name):
+                    fileLines = []
+                    with open(included_file_name, 'r') as inputFile:
                         line = inputFile.readline()
-                if included_file_name.endswith(".fs"):
-                    fileLines = buildStackFrames(fileLines, included_file_name, debug)
-                if fileLines:
-                    file_lines[i:i+1] = fileLines
-                    i += len(fileLines) - 1
+                        while (line):
+                            fileLines.append(line)
+                            line = inputFile.readline()
+                    if included_file_name.endswith(".fs"):
+                        fileLines = buildStackFrames(fileLines, included_file_name, debug)
+                    if fileLines:
+                        file_lines[i:i+1] = fileLines
+                        i += len(fileLines) - 1
+                    else:
+                        print("{}:{}: Failed to parse included file {}".format(filename, fline, included_file_name))
+                        return
                 else:
-                    print("{}:{}: Failed to parse included file {}".format(filename, fline, included_file_name))
+                    print("{}:{}: Included file [ {} ] not found".format(filename, fline, included_file_name))
                     return
-                
+
             else:
                 print(fline, ": Syntax error: Malformed #include statement")
                 return
@@ -585,9 +807,10 @@ def buildStackFrames(file_lines, filename, debug):
                 stack = {"$at": 0}
                 stack_varnames = ["$at"]
                 stackSize = 4
-                
             
             aliases = []
+            # Bindings from array names (with dollar signs) to array sizes
+            array_bindings = dict()
             code_lines = []
             i += 1
             fline += 1
@@ -595,10 +818,11 @@ def buildStackFrames(file_lines, filename, debug):
             function_head = -1
             while (not line.strip().startswith(("!FUNCTION", "!function"))):
                 interpret = line.strip()
+
                 if interpret.startswith(("#include", "#INCLUDE")):
                     print("{}:{}: Syntax error: #include symbol found inside a function block".format(filename, fline))
                     return
-                if interpret.startswith(".stacksave "):
+                if interpret.startswith((".stacksave ", ".stacksave\t")):
                     if (function_head == -1):
                         print("{}:{}: Syntax error: .stacksave symbol found before function_head".format(filename, fline))
                         return
@@ -612,7 +836,7 @@ def buildStackFrames(file_lines, filename, debug):
                         stack[x] = stackSize
                         stackSize += 4
                         stack_inserts.append(x)
-                elif interpret.startswith(".stackalloc"):
+                elif interpret.startswith((".stackalloc ", ".stackalloc\t", ".stackalloc")):
                     if (function_head == -1):
                         print("{}:{}: Syntax error: .stackalloc symbol found before function_head".format(filename, fline))
                         return
@@ -622,24 +846,25 @@ def buildStackFrames(file_lines, filename, debug):
                     for x in stack_vars:
                         split_var = re.match("([(]\d+[)])([a-zA-Z_][^\s#]*)", x.strip())
                         if split_var:
-                            size = split_var[1][1:-1]
+                            size_n = split_var[1][1:-1]
                             name = split_var[2]
                             if name in stack:
                                 print("{}:{}: Syntax error: Duplicate stack variable, name {}".format(filename, fline, name))
                             try:
-                                if int(size) % 4:
+                                size = int(size_n)
+                                if size % 4 or size == 0:
                                     print("{}:{}: Syntax error: Stack allocations must be in multiples of 4, support for byte allocations may be added later".format(filename, fline))
                                     return
                             except:
-                                print("{}:{}: Syntax error: Stack allocation size must be an integer, found {}".format(filename, fline, size))
+                                print("{}:{}: Syntax error: Stack allocation size must be an integer, found {}".format(filename, fline, size_n))
                                 return
                             stack[name] = stackSize
-                            stackSize += int(size)
+                            stackSize += size
                             stack_varnames.append(name)
                         else:
                             print("{}:{}: Syntax error: Bad stack alloc declaration {}, expected [ (bytesize)vname ]".format(filename, fline, x))
                             return
-                elif interpret.startswith(".alias "):
+                elif interpret.startswith((".alias ", ".alias\t")):
                     if (function_head == -1):
                         print("{}:{}: Syntax error: .alias symbol found before function_head".format(filename, fline))
                         return
@@ -652,6 +877,34 @@ def buildStackFrames(file_lines, filename, debug):
                             aliases.append((name, reg))
                         else:
                             print("{}:{}: Syntax error: Bad alias declaration {}, expected [ (register)vname ]".format(filename, fline, x))
+                            return
+                elif interpret.startswith(".array_"):
+                    if (function_head == -1):
+                        print("{}:{}: Syntax error: .array symbol found before function_head".format(filename, fline))
+                        return
+                    array_size = re.match(".array_(\d+)", interpret)
+                    if not array_size:
+                        print('{}:{}: Syntax error: bad .array size declaration, expected [ "array_\d+" ]'.format(filename, fline))
+                        return
+                    size_n = array_size[1]
+                    try:
+                        size = int(size_n)
+                        if (size != 2) and (size != 1) and (size % 4 or size == 0):
+                            print("{}:{}: Syntax error: Array allocations must be 1, 2, or a multiple of 4, found {}".format(filename, fline, size))
+                            return
+                    except:
+                        print("{}:{}: Syntax error: Array allocations must be an integer, found {}".format(filename, fline, size_n))
+                        return
+                    alias_vars = re.findall('[^\s]+', line)[1:]
+                    for x in alias_vars:
+                        split_var = re.match("([(]\$[^)]+[)])([a-zA-Z_][^\s,#]*)", x.strip())
+                        if split_var:
+                            reg = split_var[1][1:-1]
+                            name = split_var[2]
+                            aliases.append((name, reg))
+                            array_bindings[reg] = size
+                        else:
+                            print("{}:{}: Syntax error: Bad array alias declaration {}, expected [ (register)vname ]".format(filename, fline, x))
                             return
 
                 elif interpret.startswith(function_name + ":"):
@@ -694,11 +947,13 @@ def buildStackFrames(file_lines, filename, debug):
                 func_fline += 1
                 line = file_lines[j]
                 interpret = line.strip()
-                if interpret.startswith(".stackalloc") or interpret.startswith(".alias ") or interpret.startswith(".stacksave "):
+                no_comment = interpret.split("#", 1)[0]
+
+                if interpret.startswith((".stackalloc ", ".stackalloc\t", ".stackalloc", ".alias ", ".alias\t", ".stacksave ", ".stacksave\t", ".array_")):
                     continue
                 
                 if interpret.startswith(".aliaslocal "):
-                    alias_vars = re.findall('[^\s]+', line)[1:]
+                    alias_vars = re.findall('[^\s]+', no_comment)[1:]
                     for x in alias_vars:
                         split_var = re.match("([(]\$[^)]+[)])([a-zA-Z_][^\s#]*)", x.strip())
                         if split_var:
@@ -718,7 +973,7 @@ def buildStackFrames(file_lines, filename, debug):
                 if la:
                     prefix = la[1]
                     # Process special la command!
-                    la_inst = re.search("la\s+(\$[^\s,]+)\s*,\s*([a-zA-Z_][^\s#()]*)", line)
+                    la_inst = re.search("la\s+(\$[^\s,]+)\s*,\s*([a-zA-Z_][^\s#()]*)", no_comment)
                     if la_inst:
                         var = la_inst[2]
                         if var in stack:
@@ -732,7 +987,7 @@ def buildStackFrames(file_lines, filename, debug):
                     if not useStack:
                         print("{}:{}: Syntax error: lstk (Load Stack) pseudoinstruction used without a stack initialization".format(filename, func_fline))
                         return
-                    lstk_inst = re.search("lstk\s+(\$[^\s,]+)\s*,\s*(\d+[(][^\s#()]*[)]|[^\s#()]*)", line)
+                    lstk_inst = re.search("lstk\s+(\$[^\s,]+)\s*,\s*(\d+[(][^\s#()]*[)]|[^\s#()]*)", no_comment)
                     if not lstk_inst:
                         print("{}:{}: Syntax error: lstk (Load Stack) pseudoinstruction is malformed".format(filename, func_fline))
                         return
@@ -755,7 +1010,7 @@ def buildStackFrames(file_lines, filename, debug):
                     if not useStack:
                         print("{}:{}: Syntax error: sstk (Store Stack) pseudoinstruction used without a stack initialization".format(filename, func_fline))
                         return
-                    sstk_inst = re.search("sstk\s+(\$[^\s,]+)\s*,\s*([^\s#]*)", line)
+                    sstk_inst = re.search("sstk\s+(\$[^\s,]+)\s*,\s*([^\s#]*)", no_comment)
                     if not sstk_inst:
                         print("{}:{}: Syntax error: sstk (Store Stack) pseudoinstruction is malformed".format(filename, func_fline))
                         return
@@ -773,11 +1028,13 @@ def buildStackFrames(file_lines, filename, debug):
 
                 line_parts = line.split("#", 1)
                 for alias in local_alias:
-                    line_parts[0] = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line_parts[0])
+                    line_parts[0] = re.sub("\${}(?=[^a-zA-Z_0-9]|$)".format(alias[0]), alias[1], line_parts[0])
                 for alias in aliases:
-                    line_parts[0] = re.sub("\${}(?=[\s#=,)]|$)".format(alias[0]), alias[1], line_parts[0])
+                    line_parts[0] = re.sub("\${}(?=[^a-zA-Z_0-9]|$)".format(alias[0]), alias[1], line_parts[0])
                 
                 line = "#".join(line_parts)
+                interpret = line.strip()
+                no_comment = interpret.split("#", 1)[0]
 
                 if re.search("(\$k0(?=[\s#,)]|$))", line_parts[0]):
                     k0_warning |= 2
@@ -791,40 +1048,32 @@ def buildStackFrames(file_lines, filename, debug):
                         print("{}:{}: WARNING: tmp register {} (used by Arithmetic Assign) appears later in file, use .alias to ensure registers aren't touched.".format(filename, func_fline, used_tmp_reg))
                         
 
+                append_original = True
                 assign_statement = re.match("((?:[^#]*:)?\s*)assign\s+", line)
                 if assign_statement:
                     prefix = assign_statement[1]
-                    spacing = ' ' * len(prefix)
-                    assign_inst = re.search("assign\s+(\$[^\s=]+)\s*=\s*([^#]*)", line)
+                    assign_inst = re.search("assign\s+(\$[^\s=]+)\s*=\s*([^#]*)", no_comment)
                     if not assign_inst:
                         print("{}:{}: Syntax error: assign (Arithmetic assign) pseudoinstruction is malformed".format(filename, func_fline))
                         return
                     target_reg = assign_inst[1]
                     expr_body = assign_inst[2]
-                    assign_lines, assign_used_registers = parse_expr(target_reg, expr_body)
-                    if len(assign_used_registers) > len(free_tmp_registers):
-                        print("{}:{}: UnsupportedComplexity error: assign (Arithmetic assign) pseudoinstruction uses more temporaries than are available! Try freeing some by using .stacksave or .aliaslocal".format(filename, func_fline))
-                        return
-                    if len(assign_used_registers) > 0 and len(assign_lines) > 1:
-                        code_lines += ["{}.set noat   # {}\n".format(prefix, interpret)]
-                    else:
-                        code_lines += ["{}# {}\n".format(prefix, interpret)]
-                    regmapping = []
-                    free_reg_index = 0
-                    for regToMap in assign_used_registers:
-                        used_tmp_registers.add(free_tmp_registers[len(regmapping)])
-                        regmapping.append((regToMap, free_tmp_registers[len(regmapping)]))
-                    for assign_line in assign_lines:
-                        assign_line = spacing + assign_line
-                        for mapping in regmapping:
-                            assign_line = re.sub("\${}(?=[\s#,)]|$)".format(mapping[0][1:]), mapping[1], assign_line)
-                        code_lines.append(assign_line)
-                    if len(assign_used_registers) > 0 and len(assign_lines) > 1:
-                        code_lines += ["{}.set at\n".format(prefix)]
+                    code_lines += parse_expr_update_used(target_reg, expr_body, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+                    append_original = False
 
-                    if debug:
-                        print("{}:{}: [DEBUG] assign statement uses {} tmp registers: {}".format(filename, func_fline, len(regmapping), ', '.join([x[1] for x in regmapping])))
-                else:
+                return_statement = re.match("((?:[^#]*:)?\s*)@return\s+", line, re.IGNORECASE)
+                if return_statement:
+                    prefix = return_statement[1]
+                    return_inst = re.search("@return\s+([^#]*)", no_comment, re.IGNORECASE)
+                    if return_inst:
+                        return_expr = return_inst[1].strip()
+                        if return_expr:
+                            if debug:
+                                print("{}:{}: [DEBUG] return-assign statement found: {}".format(filename, func_fline, return_expr))
+                            target_reg = '$v0'
+                            code_lines += parse_expr_update_used(target_reg, return_expr, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+
+                if append_original:
                     code_lines.append(line)
                 
             if k0_warning == 7:
@@ -902,7 +1151,6 @@ def buildStackFrames(file_lines, filename, debug):
                         print("{}:{}: SEVERE-Warning: Manually allocated instruction handler space is not large enough to fit all allocated local variables. This is probably an error".format(filename, fline))
                     code_lines.insert(0, "{}:  .space {}\n".format(ih_address_name, ih_space))
                     code_lines.insert(0, ".kdata\n")
-
 
                 if interrupt_handler:
                     cleanup_code.append(".set noat\n")
