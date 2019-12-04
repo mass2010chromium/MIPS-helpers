@@ -66,7 +66,6 @@ class Tokenizer:
         return self.next == None
 
 """
-
 expr_store:
     > number ( expr )           ((store word))
     > expr
