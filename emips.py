@@ -982,7 +982,7 @@ def buildStackFrames(file_lines, filename, const_defines, debug):
             local_alias = []
             
             stkptr = "sp"
-            k0_warning = 0 # Bit 0: Interrupt handler or not. Bit 1: Seen $k0 or not. Bit 2: Seen lstk/sstk or not.
+            k0_warning = 7 # Bit 0: Interrupt handler or not. Bit 1: Seen $k0 or not. Bit 2: Seen lstk/sstk or not.
             if interrupt_handler:
                 stkptr = "k0"
                 k0_warning = 1
