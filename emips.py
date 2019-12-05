@@ -1109,12 +1109,16 @@ def buildStackFrames(file_lines, filename, const_defines, debug):
                         return
                     target_reg = assign_inst[1]
                     expr_body = assign_inst[2]
-                    lines_to_add = parse_expr_update_used(target_reg, expr_body, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
-                    if not lines_to_add:
+                    try:
+                        lines_to_add = parse_expr_update_used(target_reg, expr_body, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+                        if not lines_to_add:
+                            print("{}:{}: Syntax error: Parse error in assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
+                            return
+                        code_lines += lines_to_add
+                        append_original = False
+                    except:
                         print("{}:{}: Syntax error: Parse error in assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
                         return
-                    code_lines += lines_to_add
-                    append_original = False
 
                 return_statement = re.match("((?:[^#]*:)?\s*)@return\s+", line, re.IGNORECASE)
                 if return_statement:
@@ -1126,11 +1130,15 @@ def buildStackFrames(file_lines, filename, const_defines, debug):
                             if debug:
                                 print("{}:{}: [DEBUG] return-assign statement found: {}".format(filename, func_fline, return_expr))
                             target_reg = '$v0'
-                            lines_to_add = parse_expr_update_used(target_reg, return_expr, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
-                            if not lines_to_add:
-                                print("{}:{}: Syntax error: Parse error in return-assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
-                                return
-                            code_lines += lines_to_add
+                            try:
+                                lines_to_add = parse_expr_update_used(target_reg, return_expr, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
+                                if not lines_to_add:
+                                    print("{}:{}: Syntax error: Parse error in return-assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
+                                    return
+                                code_lines += lines_to_add
+                        except:
+                            print("{}:{}: Syntax error: Parse error in assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
+                            return
 
                 if append_original:
                     code_lines.append(line)
