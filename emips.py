@@ -461,12 +461,12 @@ def traverse_getlines(target_reg, tree, used_set, used_registers=[]):
         left_lines = []
         leftRegister = ""
         if tree.left:
-            if (rightRegister != RIGHT_REG) or (rightIMM and (op in immediate_symmetric or op in unary_map)):
+            if (rightRegister and rightRegister != RIGHT_REG) or (rightIMM and (op in immediate_symmetric or op in unary_map)):
                 LEFT_REG = target_reg
                 new_used = used_registers
             else:
-                LEFT_REG = get_next_unused_register(used_registers)
                 new_used = used_registers + [target_reg]
+                LEFT_REG = get_next_unused_register(new_used)
             # print("Go left: ", LEFT_REG, " = ", hex(id(tree)), "->", hex(id(tree.left)), ", ", new_used)
             left_lines, leftRegister, leftIMM = traverse_getlines(LEFT_REG, tree.left, used_set, new_used)
             # print("Gone left: ", hex(id(tree)))
@@ -669,6 +669,9 @@ def parse_expr(target_reg, text, array_bindings, needs_extra=False):
                             regdest_new = inst_full.regdest
                             if regdest in inst_full.regsrc: # Data dependancy that we can't resolve!
                                 break
+                            if regdest_new == regdest:
+                                print("FAILED const folding! {}".format(i))
+                                [print(x.text) for x in lines]
                             assert regdest_new != regdest
                         lines[i] = inst_full
                         i += 1
@@ -1116,8 +1119,9 @@ def buildStackFrames(file_lines, filename, const_defines, debug):
                             return
                         code_lines += lines_to_add
                         append_original = False
-                    except:
+                    except Exception as e:
                         print("{}:{}: Syntax error: Parse error in assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
+                        raise e
                         return
 
                 return_statement = re.match("((?:[^#]*:)?\s*)@return\s+", line, re.IGNORECASE)
@@ -1136,9 +1140,10 @@ def buildStackFrames(file_lines, filename, const_defines, debug):
                                     print("{}:{}: Syntax error: Parse error in return-assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
                                     return
                                 code_lines += lines_to_add
-                        except:
-                            print("{}:{}: Syntax error: Parse error in assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
-                            return
+                            except Exception as e:
+                                print("{}:{}: Syntax error: Parse error in assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
+                                raise e
+                                return
 
                 if append_original:
                     code_lines.append(line)
