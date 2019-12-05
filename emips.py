@@ -1126,10 +1126,10 @@ def buildStackFrames(file_lines, filename, const_defines, debug):
                             if debug:
                                 print("{}:{}: [DEBUG] return-assign statement found: {}".format(filename, func_fline, return_expr))
                             target_reg = '$v0'
+                            lines_to_add = parse_expr_update_used(target_reg, return_expr, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
                             if not lines_to_add:
                                 print("{}:{}: Syntax error: Parse error in return-assign (Arithmetic assign) pseudoinstruction".format(filename, func_fline))
                                 return
-                            lines_to_add = parse_expr_update_used(target_reg, return_expr, used_tmp_registers, free_tmp_registers, array_bindings, prefix, interpret)
                             code_lines += lines_to_add
 
                 if append_original:
