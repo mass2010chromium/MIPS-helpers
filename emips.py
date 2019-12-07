@@ -31,7 +31,7 @@ class Tokenizer:
     def get_next_token(self):
         self.text = self.text.strip()
         text = self.text
-        operator_match = re.match(">::|>:|>|\*::|\*:|\*;;|\*;|&\[|[\[\]()+*/%&|^~-]|~\||<<|>>>|>>", text)
+        operator_match = re.match(">>>|>>|~\||<<|>::|>:|>|\*::|\*:|\*;;|\*;|&\[|[\[\]()+*/%&|^~-]", text)
         if operator_match:
             self.next_type = "operator"
             self.text = self.text[len(operator_match[0]):]
@@ -418,6 +418,7 @@ inst_map = {     "+"  : "add     ",
                  "&"  : "and     ",
                  "|"  : "or      ",
                  "^"  : "xor     ",
+                 "~|" : "nor     ",
                  "<<" : "sllv    ",
                  ">>" : "srav    ",
                  ">>>": "srlv    "}
@@ -985,7 +986,7 @@ def buildStackFrames(file_lines, filename, const_defines, debug):
             k0_warning = 6 # Bit 0: Interrupt handler or not. Bit 1: Seen $k0 or not. Bit 2: Seen lstk/sstk or not.
             if interrupt_handler:
                 stkptr = "k0"
-                k0_warning = 1
+                k0_warning = 7
             func_fline = fline_func_start
             free_tmp_registers = ["$at"] + ["$t"+str(i) for i in range(9, -1, -1)]
             free_tmp_registers += ["$v1", "$v0", "$a3", "$a2", "$a1", "$a0"]
